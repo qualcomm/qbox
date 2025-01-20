@@ -28,6 +28,7 @@
 #include <scp/report.h>
 
 #include "ports/qemu-target-signal-socket.h"
+#include "mcips-plugin.h"
 
 class QemuDeviceBaseIF
 {
@@ -146,7 +147,23 @@ public:
         return TCG_UNSPECIFIED;
     }
 
+    enum TimeSyncStrategy {
+        TIME_SYNC_QUANTUM_KEEPER,
+        TIME_SYNC_MCIPS,
+    };
+    TimeSyncStrategy StringToTimeSyncStrategy(std::string s)
+    {
+        if (s == "quantum_keeper") return TIME_SYNC_QUANTUM_KEEPER;
+        if (s == "mcips") return TIME_SYNC_MCIPS;
+        SCP_FATAL(()) << "Unknown time_sync_strategy '" << s << "' (expected \"quantum_keeper\" or \"mcips\")";
+        sc_assert(false);
+        return TIME_SYNC_QUANTUM_KEEPER;
+    }
+
 protected:
+    cci::cci_param<std::string> p_time_sync_strategy;
+    std::unique_ptr<McipsPlugin> m_mcips_plugin;
+
     qemu::LibQemu m_inst;
     QemuInstanceDmiManager m_dmi_mgr;
 
@@ -310,6 +327,10 @@ public:
         , p_args("qemu_args", "", "additional space separated arguments")
         , p_accel("accel", "tcg", "Virtualization accelerator")
         , p_whpx_args("whpx_args", "", "Additional WHPX accelerator properties (e.g. gicd-base-address=0x17000000)")
+        , p_time_sync_strategy("time_sync_strategy", "quantum_keeper",
+                               "QEMU<->SystemC time synchronization strategy: \"quantum_keeper\" (default) uses the "
+                               "traditional quantum keeper; \"mcips\" syncs time based on the number of instructions "
+                               "via the multi core instructions per second plugin.")
     {
         SCP_DEBUG(()) << "Libqbox QemuInstance constructor";
 
@@ -319,11 +340,29 @@ public:
         m_running = true;
         p_tcg_mode.lock();
         push_default_args();
+        if (StringToTimeSyncStrategy(p_time_sync_strategy) == TIME_SYNC_MCIPS) {
+            m_mcips_plugin = std::make_unique<McipsPlugin>("mcips_plugin", m_inst);
+            /* Plugin filename per platform: meson shared_module() defaults */
+#if defined(_WIN32)
+            m_mcips_plugin->push_plugin_args("libidlinker.dll");
+#elif defined(__APPLE__)
+            m_mcips_plugin->push_plugin_args("libidlinker.dylib");
+#else /* Linux */
+            m_mcips_plugin->push_plugin_args("libidlinker.so");
+#endif
+        }
     }
 
     QemuInstance(const QemuInstance&) = delete;
     QemuInstance(QemuInstance&&) = delete;
-    virtual ~QemuInstance() { m_running = false; }
+
+    virtual ~QemuInstance()
+    {
+        m_running = false;
+        if (m_mcips_plugin) {
+            m_mcips_plugin.reset();
+        }
+    }
 
     bool operator==(const QemuInstance& b) const { return this == &b; }
 
@@ -489,6 +528,24 @@ public:
     }
 
     /**
+     * @brief Returns the mcips_plugin.
+     *
+     * @details Returns the mcips_plugin for the current instance.
+     */
+    McipsPlugin& get_mcips_plugin()
+    {
+        sc_assert(m_mcips_plugin);
+        return *m_mcips_plugin;
+    }
+
+    /**
+     * @brief Check if multi core instructions per second plugin (mcips) is enabled.
+     *
+     * @details Returns true only if the CCI parameter requested it AND the plugin was actually constructed.
+     */
+    bool is_mcips_enabled() const noexcept { return static_cast<bool>(m_mcips_plugin); }
+
+    /**
      * @brief Returns the locked QemuInstanceDmiManager instance
      *
      * Note: we rely on RVO here so no copy happen on return (this is enforced
@@ -500,7 +557,13 @@ public:
     int number_devices() { return devices.size(); }
 
 private:
-    void start_of_simulation(void) { get().finish_qemu_init(); }
+    void before_end_of_elaboration() override
+    {
+        if (!is_inited()) {
+            init(); // dlsyms libqemu_init; plugin functions are part of the returned LibQemuExports table.
+        }
+    }
+    void start_of_simulation(void) override { get().finish_qemu_init(); }
 
     void reset_cb(const bool val)
     {
