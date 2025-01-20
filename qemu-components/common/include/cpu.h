@@ -27,8 +27,114 @@
 #include "tlm-extensions/qemu-cpu-hint.h"
 #include "ports/qemu-target-signal-socket.h"
 
+class QemuCpu;
+
+/*
+ * QEMU<->SystemC time synchronization strategy.
+ *
+ * QemuCpu owns one strategy, chosen at construction, and calls a hook at each
+ * point where time synchronization is involved (lifecycle, halt/reset, CPU
+ * start, TLM local-time). The quantum-keeper machinery itself (deadline timer,
+ * kick/end-of-loop callbacks, the CPU run loop, MTTCG signalling) lives on
+ * QemuCpu; a hook either drives it or does nothing.
+ *
+ *  - QuantumKeeperSync : forwards every hook to the matching QemuCpu method
+ *    (quantum-keeper time synchronization).
+ *
+ *  - McipsSync : time is driven by the MCIPS plugin, so almost every hook is a
+ *    no-op. It overrides only on_end_of_elaboration() to register the CPU's
+ *    instructions-per-second with the plugin. The hooks it does NOT override
+ *    document precisely how much of the CPU lifecycle MCIPS participates in.
+ *
+ * Strategies hold no state of their own; they reach QemuCpu through m_qemu_cpu
+ * (a back-reference). The two concrete strategies are nested classes of
+ * QemuCpu, which grants them access to its private/protected members.
+ */
+class CpuTimeSyncStrategy
+{
+public:
+    explicit CpuTimeSyncStrategy(QemuCpu& qemu_cpu): m_qemu_cpu(qemu_cpu) {}
+    virtual ~CpuTimeSyncStrategy() = default;
+
+    /* Lifecycle hooks, called from the matching QemuCpu method. */
+    virtual void on_construct() {}
+    /* before_end_of_elaboration: after_cpu_created runs right after m_cpu is
+     * built (before socket.init); the main hook runs after set_soft_stopped. */
+    virtual void on_after_cpu_created() {}
+    virtual void on_before_end_of_elaboration() {}
+    virtual void on_end_of_elaboration() {}
+    virtual void on_end_of_simulation() {}
+    virtual void on_destroy() {}
+
+    /* halt_cb: pre runs before the QEMU halt, post after it. */
+    virtual void on_halt_pre(bool val) {}
+    virtual void on_halt_post() {}
+
+    /* reset_cb: finish runs at end-of-reset, notify at the very end. */
+    virtual void on_reset_finish() {}
+    virtual void on_kick_notify() {}
+
+    /* start_of_simulation: (idempotent) quantum-keeper start + deadline arm. */
+    virtual void on_qk_start() {}
+    virtual void on_arm_deadline() {}
+
+    /* TLM initiator local-time hooks. */
+    virtual sc_core::sc_time get_local_time(int64_t vclock_now, sc_core::sc_time sc_t) { return sc_core::SC_ZERO_TIME; }
+    virtual void set_local_time(const sc_core::sc_time& t) {}
+
+protected:
+    QemuCpu& m_qemu_cpu;
+    SCP_LOGGER();
+};
+
 class QemuCpu : public QemuDevice, public QemuInitiatorIface
 {
+    /*
+     * The concrete time-sync strategies are nested classes so they can reach
+     * QemuCpu's private/protected members directly.
+     */
+
+    /*
+     * Traditional quantum-keeper time synchronization. Every hook forwards to
+     * the matching QemuCpu method.
+     */
+    class QuantumKeeperSync : public CpuTimeSyncStrategy
+    {
+    public:
+        using CpuTimeSyncStrategy::CpuTimeSyncStrategy;
+
+        void on_construct() override;
+        void on_after_cpu_created() override;
+        void on_before_end_of_elaboration() override;
+        void on_end_of_simulation() override;
+        void on_destroy() override;
+        void on_halt_pre(bool val) override;
+        void on_halt_post() override;
+        void on_reset_finish() override;
+        void on_kick_notify() override;
+        void on_qk_start() override;
+        void on_arm_deadline() override;
+        sc_core::sc_time get_local_time(int64_t vclock_now, sc_core::sc_time sc_t) override;
+        void set_local_time(const sc_core::sc_time& t) override;
+    };
+
+    /*
+     * MCIPS time synchronization. Time is driven by the MCIPS plugin, so the
+     * CPU does not run a quantum keeper at all. The only thing it contributes
+     * to the CPU lifecycle is registering its instructions-per-second rate with
+     * the plugin at end of elaboration.
+     */
+    class McipsSync : public CpuTimeSyncStrategy
+    {
+    public:
+        using CpuTimeSyncStrategy::CpuTimeSyncStrategy;
+
+        void on_end_of_elaboration() override;
+    };
+
+private:
+    inline bool mcips_enabled() const { return m_inst.is_mcips_enabled(); } // mcips: multi core instructions per second
+
 protected:
     /*
      * We have a unique copy per CPU of this extension, which is not dynamically allocated.
@@ -62,8 +168,12 @@ protected:
 
     std::mutex m_can_delete;
     QemuCpuHintTlmExtension m_cpu_hint_ext;
+    cci::cci_param<uint64_t> m_insn_per_second;
 
     uint64_t m_quantum_ns; // For convenience
+
+    /* Time synchronization strategy (quantum keeper or MCIPS), chosen at construction. */
+    std::unique_ptr<CpuTimeSyncStrategy> m_time_sync;
 
     /*
      * Outstanding async work tracking.
@@ -406,23 +516,23 @@ public:
         , m_signaled(false)
         , p_gdb_port("gdb_port", 0, "Wait for gdb connection on TCP port <gdb_port>")
         , socket("mem", *this, inst)
+        , m_insn_per_second("insn_per_second", 1'000'000'000, "number of instructions per second in mcips mode")
+        , m_coroutines(false)
     {
         using namespace std::placeholders;
 
-        m_external_ev |= m_qemu_kick_ev;
+        if (mcips_enabled()) {
+            m_time_sync = std::make_unique<McipsSync>(*this);
+        } else {
+            m_time_sync = std::make_unique<QuantumKeeperSync>(*this);
+        }
 
         auto haltcb = std::bind(&QemuCpu::halt_cb, this, _1);
         halt.register_value_changed_cb(haltcb);
         auto resetcb = std::bind(&QemuCpu::reset_cb, this, _1);
         reset.register_value_changed_cb(resetcb);
 
-        create_quantum_keeper();
-        set_coroutine_mode();
-
-        if (!m_coroutines) {
-            SC_THREAD(watch_external_ev);
-        }
-
+        m_time_sync->on_construct();
         m_inst.add_dev(this);
 
         m_start_reset_done_ev.async_detach_suspending();
@@ -448,9 +558,7 @@ public:
             }
         }
 
-        while (!m_can_delete.try_lock()) {
-            m_qk->stop();
-        }
+        m_time_sync->on_destroy();
         m_inst.del_dev(this);
     }
 
@@ -492,11 +600,8 @@ public:
             return;
         }
 
-        /* Unblock it if it's waiting for run budget */
-        m_qk->stop();
-
-        /* Unblock the CPU thread if it's sleeping */
-        set_signaled();
+        /* Unblock it if it's waiting for run budget, and unblock the CPU thread if it's sleeping */
+        m_time_sync->on_end_of_simulation();
 
         /* Wait for QEMU to terminate the CPU thread */
         /*
@@ -522,19 +627,13 @@ public:
 
         m_cpu = qemu::Cpu(m_dev);
 
-        if (m_coroutines) {
-            m_sc_thread = sc_core::sc_spawn(std::bind(&QemuCpu::mainloop_thread_coroutine, this));
-        }
+        m_time_sync->on_after_cpu_created();
 
         socket.init(m_dev, "memory");
 
         m_cpu.set_soft_stopped(true);
 
-        m_cpu.set_end_of_loop_callback(std::bind(&QemuCpu::end_of_loop_cb, this));
-        m_cpu.set_kick_callback(std::bind(&QemuCpu::kick_cb, this));
-
-        m_deadline_timer = m_inst.get().timer_new();
-        m_deadline_timer->set_callback(std::bind(&QemuCpu::deadline_timer_cb, this));
+        m_time_sync->on_before_end_of_elaboration();
 
         m_cpu_hint_ext.set_cpu(m_cpu);
     }
@@ -543,17 +642,11 @@ public:
     {
         SCP_TRACE(())("Halt : {}", val);
         if (!m_finished) {
-            if (val) {
-                m_deadline_timer->del();
-                m_qk->stop();
-            } else {
-                m_qk->start();
-                rearm_deadline_timer();
-            }
+            m_time_sync->on_halt_pre(val);
             m_inst.get().lock_iothread();
             m_cpu.halt(val);
             m_inst.get().unlock_iothread();
-            m_qemu_kick_ev.async_notify(); // notify the other thread so that the CPU is allowed to continue
+            m_time_sync->on_halt_post();
         }
     }
 
@@ -576,24 +669,23 @@ public:
             if (m_resetting == none) return; // dont finish a finished reset!
             while (m_resetting == start_reset) {
                 SCP_WARN(())("Hold reset");
+                m_cpu.kick(); // without this kick, async_safe_run may not be called (QEMU race)
                 sc_core::wait(m_start_reset_done_ev);
             }
             m_inst.get().lock_iothread();
             socket.reset(); // remove DMI's (needs BQL for memory region updates)
             m_inst.get().unlock_iothread();
             m_cpu.reset(false); // call the end-of-reset (which will unpause the CPU)
-            m_qk->start();      // restart the QK if it's stopped
-            m_qk->reset();
-            m_qemu_kick_ev.async_notify(); // notify the other thread so that the CPU is allowed to continue
+            m_time_sync->on_reset_finish();
             SCP_WARN(())("Finished reset");
             m_resetting = none;
         }
-        m_qemu_kick_ev.async_notify(); // notify the other thread so that the CPU is allowed to process if required
+        m_time_sync->on_kick_notify();
     }
     virtual void end_of_elaboration() override
     {
         QemuDevice::end_of_elaboration();
-
+        m_time_sync->on_end_of_elaboration();
         if (!p_gdb_port.is_default_value()) {
             std::stringstream ss;
             SCP_INFO(()) << "Starting gdb server on TCP port " << p_gdb_port;
@@ -609,7 +701,7 @@ public:
         QemuDevice::start_of_simulation();
         if (m_inst.get_tcg_mode() == QemuInstance::TCG_SINGLE) {
             if (m_inst.can_run()) {
-                m_qk->start();
+                m_time_sync->on_qk_start();
             }
         } else if (!m_coroutines) {
             /*
@@ -620,7 +712,7 @@ public:
              * run_on_sysc(). The QK will be stopped later in wait_for_work()
              * when the CPU halts (e.g. WFI), allowing normal starvation exit.
              */
-            m_qk->start();
+            m_time_sync->on_qk_start();
         }
 
         m_started = true;
@@ -633,7 +725,7 @@ public:
              * first called), leaving no suspending events and causing
              * premature simulation exit due to starvation.
              */
-            m_qk->start();
+            m_time_sync->on_qk_start();
 
             /* Prepare the CPU for its first run and release it
              * Hold BQL to synchronize with the vCPU thread's idle-wait loop
@@ -645,7 +737,7 @@ public:
              */
             m_inst.get().lock_iothread();
             m_cpu.set_soft_stopped(false);
-            rearm_deadline_timer();
+            m_time_sync->on_arm_deadline();
             m_cpu.kick();
             m_inst.get().unlock_iothread();
         }
@@ -672,21 +764,11 @@ public:
      */
     virtual sc_core::sc_time initiator_get_local_time() override
     {
-        using sc_core::sc_time;
-        using sc_core::SC_NS;
-
-        int64_t vclock_now;
-
         if (m_finished) return sc_core::SC_ZERO_TIME;
 
-        vclock_now = m_inst.get().get_virtual_clock();
+        int64_t vclock_now = m_inst.get().get_virtual_clock();
         sc_core::sc_time sc_t = sc_core::sc_time_stamp();
-        if (sc_time(vclock_now, SC_NS) > sc_t) {
-            m_qk->set(sc_time(vclock_now, SC_NS) - sc_t);
-            return m_qk->get_local_time();
-        } else {
-            return sc_core::SC_ZERO_TIME;
-        }
+        return m_time_sync->get_local_time(vclock_now, sc_t);
     }
 
     /*
@@ -696,15 +778,7 @@ public:
     virtual void initiator_set_local_time(const sc_core::sc_time& t) override
     {
         if (m_finished) return;
-        m_qk->set(t);
-
-        if (m_qk->need_sync()) {
-            /*
-             * Kick the CPU out of its execution loop so that we can sync with
-             * the kernel.
-             */
-            m_cpu.kick();
-        }
+        m_time_sync->set_local_time(t);
     }
 
     /* expose async run interface for DMI invalidation */
@@ -713,5 +787,124 @@ public:
         if (!m_finished) m_cpu.async_run(make_tracked_async_job(std::move(job)));
     }
 };
+
+/*
+ * ---- QuantumKeeperSync out-of-line definitions ----
+ *
+ * Defined after QemuCpu so they can reach its members and methods (as a nested
+ * class) through m_qemu_cpu. Each hook simply forwards to the matching
+ * QemuCpu method.
+ */
+
+inline void QemuCpu::QuantumKeeperSync::on_construct()
+{
+    m_qemu_cpu.m_external_ev |= m_qemu_cpu.m_qemu_kick_ev;
+
+    m_qemu_cpu.create_quantum_keeper();
+    m_qemu_cpu.set_coroutine_mode();
+    if (!m_qemu_cpu.m_coroutines) {
+        sc_core::sc_spawn(std::bind(&QemuCpu::watch_external_ev, &m_qemu_cpu), "watch_external_ev");
+    }
+}
+
+inline void QemuCpu::QuantumKeeperSync::on_after_cpu_created()
+{
+    if (m_qemu_cpu.m_coroutines) {
+        m_qemu_cpu.m_sc_thread = sc_core::sc_spawn(std::bind(&QemuCpu::mainloop_thread_coroutine, &m_qemu_cpu));
+    }
+}
+
+inline void QemuCpu::QuantumKeeperSync::on_before_end_of_elaboration()
+{
+    m_qemu_cpu.m_cpu.set_end_of_loop_callback(std::bind(&QemuCpu::end_of_loop_cb, &m_qemu_cpu));
+    m_qemu_cpu.m_cpu.set_kick_callback(std::bind(&QemuCpu::kick_cb, &m_qemu_cpu));
+    m_qemu_cpu.m_deadline_timer = m_qemu_cpu.m_inst.get().timer_new();
+    m_qemu_cpu.m_deadline_timer->set_callback(std::bind(&QemuCpu::deadline_timer_cb, &m_qemu_cpu));
+}
+
+inline void QemuCpu::QuantumKeeperSync::on_end_of_simulation()
+{
+    m_qemu_cpu.m_qk->stop();
+    /* Unblock the CPU thread if it's sleeping */
+    m_qemu_cpu.set_signaled();
+}
+
+inline void QemuCpu::QuantumKeeperSync::on_destroy()
+{
+    while (!m_qemu_cpu.m_can_delete.try_lock()) {
+        m_qemu_cpu.m_qk->stop();
+    }
+}
+
+inline void QemuCpu::QuantumKeeperSync::on_halt_pre(bool val)
+{
+    if (val) {
+        m_qemu_cpu.m_deadline_timer->del();
+        m_qemu_cpu.m_qk->stop();
+    } else {
+        m_qemu_cpu.m_qk->start();
+        m_qemu_cpu.rearm_deadline_timer();
+    }
+}
+
+inline void QemuCpu::QuantumKeeperSync::on_halt_post()
+{
+    m_qemu_cpu.m_qemu_kick_ev.async_notify(); // notify the other thread so that the CPU is allowed to continue
+}
+
+inline void QemuCpu::QuantumKeeperSync::on_reset_finish()
+{
+    m_qemu_cpu.m_qk->start(); // restart the QK if it's stopped
+    m_qemu_cpu.m_qk->reset();
+    m_qemu_cpu.m_qemu_kick_ev.async_notify(); // notify the other thread so that the CPU is allowed to continue
+}
+
+inline void QemuCpu::QuantumKeeperSync::on_kick_notify()
+{
+    m_qemu_cpu.m_qemu_kick_ev
+        .async_notify(); // notify the other thread so that the CPU is allowed to process if required
+}
+
+inline void QemuCpu::QuantumKeeperSync::on_qk_start() { m_qemu_cpu.m_qk->start(); }
+
+inline void QemuCpu::QuantumKeeperSync::on_arm_deadline() { m_qemu_cpu.rearm_deadline_timer(); }
+
+inline sc_core::sc_time QemuCpu::QuantumKeeperSync::get_local_time(int64_t vclock_now, sc_core::sc_time sc_t)
+{
+    using sc_core::sc_time;
+    using sc_core::SC_NS;
+
+    if (sc_time(vclock_now, SC_NS) > sc_t) {
+        m_qemu_cpu.m_qk->set(sc_time(vclock_now, SC_NS) - sc_t);
+        return m_qemu_cpu.m_qk->get_local_time();
+    }
+    return sc_core::SC_ZERO_TIME;
+}
+
+inline void QemuCpu::QuantumKeeperSync::set_local_time(const sc_core::sc_time& t)
+{
+    m_qemu_cpu.m_qk->set(t);
+
+    if (m_qemu_cpu.m_qk->need_sync()) {
+        /*
+         * Kick the CPU out of its execution loop so that we can sync with
+         * the kernel.
+         */
+        m_qemu_cpu.m_cpu.kick();
+    }
+}
+
+/*
+ * ---- McipsSync out-of-line definitions ----
+ */
+
+inline void QemuCpu::McipsSync::on_end_of_elaboration()
+{
+    if (!m_qemu_cpu.m_inst.get_mcips_plugin().set_vcpu_insn_per_second(m_qemu_cpu.m_cpu.get_index(),
+                                                                       m_qemu_cpu.m_insn_per_second)) {
+        SCP_FATAL(()) << "Failed to set insn_per_second for cpu_" << m_qemu_cpu.m_cpu.get_index();
+        sc_assert(false);
+    }
+}
 
 #endif
