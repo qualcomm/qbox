@@ -22,6 +22,7 @@
 #include <thread>
 #include <future>
 #include <qkmultithread.h>
+#include <mcips-plugin.h>
 #include <chrono>
 #include <atomic>
 #include <ports/biflow-socket.h>
@@ -108,12 +109,14 @@ public:
     cci::cci_param<std::string> p_html_doc_template_dir_path;
     cci::cci_param<std::string> p_html_doc_name;
     cci::cci_param<bool> p_use_html_presentation;
+    cci::cci_param<uint32_t> p_refresh_interval_ms;
 
 private:
     crow::SimpleApp m_app;
     std::future<void> m_app_future;
     gs::runonsysc m_sc;
     std::vector<tlm_quantumkeeper_multithread*> m_qks;
+    std::vector<McipsPlugin*> m_mcips_plugins;
 };
 } // namespace gs
 

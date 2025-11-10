@@ -772,6 +772,40 @@ public:
 
         return qemu_time;
     }
+
+    /**
+     * @brief Returns a JSON string with the current state of all CPUs (for debugging).
+     * Reads without m_mcips_mutex so values may be slightly out of date.
+     */
+    std::string get_mcips_status_json()
+    {
+        auto active = m_active_vcpu.load(std::memory_order_relaxed);
+        std::ostringstream os;
+
+        const uint64_t qemu_time = static_cast<uint64_t>(qemu_time_now().to_seconds() * NSEC_IN_ONE_SEC);
+
+        os << "{" << "\"name\":\"" << name() << "\"," << "\"qemu_time\":\"" << qemu_time << " ns\","
+           << "\"n_cpus\":" << m_num_vcpus << ","
+           << "\"active_vcpu_index\":" << (active ? static_cast<int64_t>(active->index) : -1) << "," << "\"vcpus\":[";
+
+        bool first = true;
+        for (int i = 0; i < m_num_vcpus; i++) {
+            auto* vcpu = get_vcpu(i);
+            if (!vcpu) continue;
+
+            if (!first) os << ",";
+            first = false;
+
+            const uint64_t ns = static_cast<uint64_t>(vcpu->cpu_time.to_seconds() * NSEC_IN_ONE_SEC);
+
+            os << "{" << "\"index\":" << vcpu->index << "," << "\"insn_per_second\":\"" << vcpu->insn_per_second
+               << "\"," << "\"delta_insn\":\"" << vcpu->delta_insn << "\"," << "\"cpu_time_ns\":\"" << ns << "\","
+               << "\"cpu_execution_status\":" << static_cast<int>(vcpu->cpu_execution_status) << "}";
+        }
+        os << "]}";
+
+        return os.str();
+    }
 };
 
 #endif //_LIBQBOX_COMPONENTS_MCIPS_PLUGIN_H

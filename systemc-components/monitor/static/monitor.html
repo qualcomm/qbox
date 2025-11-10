@@ -133,6 +133,50 @@
             <!-- Data will be inserted here -->
         </tbody>
     </table>
+
+    <meta charset="utf-8">
+    <h3>MCIPS Status</h3>
+    <label>
+        <input type="checkbox" id="timeUnitToggle" checked> Display time in seconds (uncheck for nanoseconds)
+    </label>
+    <table id="mcipsTable" border="1" style="width:100%; border-collapse:collapse;">
+        <thead>
+            <tr>
+                <th>Plugin</th>
+                <th>QEMU Time</th>
+                <th>vCPU Index</th>
+                <th>Instructions/sec</th>
+                <th>Delta Instructions</th>
+                <th>CPU Time</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+    <style>
+        #mcipsTable {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        #mcipsTable th,
+        #mcipsTable td {
+            padding: 4px 6px;
+        }
+        #mcipsTable td.num,
+        #mcipsTable th.num {
+            text-align: right;
+        }
+        #mcipsTable td.mono {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        }
+        #mcipsTable th:last-child,
+        #mcipsTable td:last-child {
+            width: 80px;
+            min-width: 80px;
+            max-width: 80px;
+        }
+    </style>
+
     <br>
     <br>
     <h3>QK Status</h3>
@@ -398,7 +442,6 @@
                 console.log("Error filtering servers:", error);
             }
         }
-
         function prettyPrintServerInfo(serverInfo) {
             const vncInfoDiv = document.getElementById("vncInfo");
             const prettyVncServerInfo = prettyPrintJson.toHtml(serverInfo);
@@ -588,6 +631,9 @@
                 const qkdata = await qkresponse.json();
                 populateQKTable(qkdata);
 
+                const mcipsResp = await fetch('/mcips_plugin_status');
+                populatemcipsTableMerged(await mcipsResp.json());
+
                 const dropdown = document.getElementById('biflowsDropdown');
                 const selectedBiflow = dropdown.value;
                 if ((!sock || sock.readyState > 1) && selectedBiflow) {
@@ -615,6 +661,138 @@
                 const rsp = fetch('/pause');
             }
         });
+
+         // ----- Constants & state -----
+        const STATUS = ['IDLE','PAUSED', 'RUNNING'];
+
+        const mcipsState = {
+            // key: `${plugin}:${vcpuIndex}` => last known status text
+            prevStatus: new Map(),
+            lastActive: new Map(),
+        };
+
+        function keyFor(plugin, idx) { return `${plugin}:${idx}`; }
+
+        // Normalize active_vcpu_index
+        function normalizeActiveIndex(val, vcpuCount) {
+            const n = Number(val);
+            if (!Number.isFinite(n) || n < 0 || n >= vcpuCount || n > 1e12) return -1;
+            return n;
+        }
+
+        // Convert time from nanoseconds to seconds or keep as nanoseconds based on checkbox
+        function formatTime(timeStr, useSeconds) {
+            if (!timeStr) return '';
+            // Extract numeric value from string like "12345 ns"
+            const match = timeStr.match(/(\d+)/);
+            if (!match) return timeStr;
+            
+            const ns = Number(match[1]);
+            if (!Number.isFinite(ns)) return timeStr;
+            
+            if (useSeconds) {
+                const seconds = ns / 1e9;
+                return seconds.toFixed(9) + ' s';
+            } else {
+                return ns + ' ns';
+            }
+        }
+
+        function addCell(tr, text, rowSpan, className) {
+            const td = tr.insertCell();
+            if (rowSpan > 1) td.rowSpan = rowSpan;
+            if (className) td.className = className;
+            td.textContent = text ?? '';
+            return td;
+        }
+
+        // ----- populate with improved visibility -----
+        function populatemcipsTableMerged(plugins) {
+            const tbody = document.querySelector('#mcipsTable tbody');
+            if (!tbody) return;
+
+            tbody.innerHTML = '';
+            const frag = document.createDocumentFragment();
+            
+            // Get checkbox state for time unit
+            const useSeconds = document.getElementById('timeUnitToggle')?.checked ?? true;
+
+            (plugins || []).forEach(p => {
+                const pluginName = p.name || '';
+                const vcpus = Array.isArray(p.vcpus) ? p.vcpus.slice() : [];
+
+                // Stable order
+                vcpus.sort((a, b) => Number(a.index) - Number(b.index));
+
+                // Detect transitions + remember last RUNNING
+                vcpus.forEach(v => {
+                    const idx = Number(v.index);
+                    const cur = STATUS[Number(v.cpu_execution_status)] ?? 'UNKNOWN';
+                    const prev = mcipsState.prevStatus.get(keyFor(pluginName, idx));
+
+                    if (cur === 'RUNNING') {
+                        mcipsState.lastActive.set(pluginName, {
+                            index: idx,
+                            atScTime: p.qemu_time
+                        });
+                    }
+
+                    mcipsState.prevStatus.set(keyFor(pluginName, idx), cur);
+                });
+
+                // Determine active and last active indices
+                const activeIdx = normalizeActiveIndex(p.active_vcpu_index, vcpus.length);
+                const allIdle = vcpus.length > 0 && vcpus.every(v => (STATUS[Number(v.cpu_execution_status)] ?? 'UNKNOWN') === 'IDLE');
+                const last = mcipsState.lastActive.get(pluginName);
+                const lastActiveIndex = (allIdle && last && activeIdx === -1) ? Number(last.index) : null;
+
+                // Draw block with rowSpan for plugin-level columns
+                const rowSpan = Math.max(vcpus.length, 1);
+
+                for (let i = 0; i < rowSpan; i++) {
+                    const v = vcpus[i] || {};
+                    const tr = document.createElement('tr');
+
+                    // Plugin-level cells once
+                    if (i === 0) {
+                        addCell(tr, pluginName, rowSpan);
+                        addCell(tr, formatTime(p.qemu_time, useSeconds), rowSpan, 'mono');
+                    }
+
+                    // vCPU Index with highlighting
+                    const tdIdx = addCell(tr, v.index ?? '-', 1, 'num');
+                    const vCpuIdx = Number(v.index);
+                    
+                    // Highlight active vCPU in green
+                    if (vCpuIdx === activeIdx && activeIdx >= 0) {
+                        tdIdx.style.backgroundColor = '#90EE90'; // Light green
+                        tdIdx.style.fontWeight = 'bold';
+                    }
+                    // Highlight last active vCPU in red when all are idle
+                    else if (lastActiveIndex !== null && vCpuIdx === lastActiveIndex) {
+                        tdIdx.style.backgroundColor = '#FFB6C6'; // Light red
+                        tdIdx.style.fontWeight = 'bold';
+                    }
+
+                    addCell(tr, v.insn_per_second ?? '0', 1, 'num mono');
+                    addCell(tr, v.delta_insn ?? '0', 1, 'num mono');
+                    addCell(tr, formatTime(v.cpu_time_ns, useSeconds), 1, 'mono');
+
+                    const statusText = STATUS[Number(v.cpu_execution_status)] ?? 'UNKNOWN';
+                    const tdStatus = tr.insertCell();
+                    tdStatus.textContent = statusText;
+                    tdStatus.style.color =
+                        statusText === 'RUNNING' ? 'green' :
+                            statusText === 'PAUSED' ? 'orange' :
+                                'gray';
+
+                    frag.appendChild(tr);
+                }
+            });
+
+            tbody.appendChild(frag);
+        }
+
         function populateQKTable(data) {
             const tableBody = document.getElementById('statusTable').getElementsByTagName('tbody')[0];
             tableBody.innerHTML = ''; // Clear existing rows
@@ -651,8 +829,35 @@
 
             });
         }
-        // Fetch the flag every 1 second
-        setInterval(fetchFlag, 1000);
+        // Fetch the refresh interval and start periodic updates
+        let refreshIntervalId;
+        
+        async function initializeRefreshInterval() {
+            try {
+                const response = await fetch('/refresh_interval');
+                const data = await response.json();
+                const intervalMs = data.refresh_interval_ms || 100; // fallback to 100ms
+                
+                // Clear any existing interval
+                if (refreshIntervalId) {
+                    clearInterval(refreshIntervalId);
+                }
+                
+                // Start new interval with configured value
+                refreshIntervalId = setInterval(fetchFlag, intervalMs);
+                console.log(`Monitor refresh interval set to ${intervalMs}ms`);
+            } catch (error) {
+                console.error('Error fetching refresh interval, using default 100ms:', error);
+                // Fallback to default interval
+                if (refreshIntervalId) {
+                    clearInterval(refreshIntervalId);
+                }
+                refreshIntervalId = setInterval(fetchFlag, 100);
+            }
+        }
+        
+        // Initialize refresh interval on page load
+        initializeRefreshInterval();
 
 
         async function fetchObjects() {

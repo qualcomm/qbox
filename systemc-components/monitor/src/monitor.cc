@@ -16,6 +16,7 @@ platform["monitor_0"] = {
     use_html_presentation = true;
     html_doc_template_dir_path = "/path/to/html/templates";
     html_doc_name = "monitor.html";
+    refresh_interval_ms = 100;
 };
 
  */
@@ -83,6 +84,7 @@ monitor<BUSWIDTH>::monitor(const sc_core::sc_module_name& nm)
                                    "path to a template directory where HTML document to call the REST API exist")
     , p_html_doc_name("html_doc_name", "monitor.html", "name of a HTML document to call the REST API")
     , p_use_html_presentation("use_html_presentation", true, "use HTML document to present the REST API")
+    , p_refresh_interval_ms("refresh_interval_ms", 100, "refresh interval in milliseconds for the web interface")
 {
     SCP_DEBUG(()) << "monitor constructor";
     m_app.signal_clear();
@@ -248,7 +250,8 @@ void monitor<BUSWIDTH>::init_monitor()
             return page.render_string();
         } else {
             std::string ret =
-                "API:\n/sc_time\n/pause\n/continue\n/reset\n/object/\n//object/<str>\n/qk_status\n/sc_suspended\n/"
+                "API:\n/sc_time\n/pause\n/continue\n/reset\n/object/\n//object/<str>\n/mcips_plugin_status\n/"
+                "qk_status\n/sc_suspended\n/refresh_interval\n/"
                 "transport_dbg/<int>/<str>";
             return ret;
         }
@@ -325,10 +328,31 @@ void monitor<BUSWIDTH>::init_monitor()
         crow::json::wvalue r = crow::json::wvalue::list(cr);
         return r;
     });
+    CROW_ROUTE(m_app, "/mcips_plugin_status")
+    ([&]() {
+        std::ostringstream os;
+        os << "[";
+        bool firstPlugin = true;
+        for (auto* p : m_mcips_plugins) {
+            if (!firstPlugin) os << ",";
+            firstPlugin = false;
+            os << p->get_mcips_status_json(); // returns a JSON string per plugin
+        }
+        os << "]";
+        crow::response res(os.str());
+        res.add_header("Content-Type", "application/json");
+        return res;
+    });
     CROW_ROUTE(m_app, "/sc_suspended")
     ([&]() {
         crow::json::wvalue r;
         r["sc_suspended"] = (sc_core::sc_get_status() == sc_core::SC_SUSPENDED);
+        return r;
+    });
+    CROW_ROUTE(m_app, "/refresh_interval")
+    ([&]() {
+        crow::json::wvalue r;
+        r["refresh_interval_ms"] = p_refresh_interval_ms.get_value();
         return r;
     });
     CROW_ROUTE(m_app, "/transport_dbg/<int>/<str>")
@@ -416,6 +440,7 @@ template <unsigned int BUSWIDTH>
 void monitor<BUSWIDTH>::end_of_elaboration()
 {
     m_qks = find_sc_objects<gs::tlm_quantumkeeper_multithread>();
+    m_mcips_plugins = find_sc_objects<McipsPlugin>();
 }
 
 template <unsigned int BUSWIDTH>
