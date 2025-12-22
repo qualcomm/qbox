@@ -87,6 +87,8 @@ function(qbox_add_cpu_test target timeout_s)
         )
     endif()
 
+    #To disable MCIPS tests: pass -DQBOX_ENABLE_MCIPS_TESTS=OFF at configure time
+    option(QBOX_ENABLE_MCIPS_TESTS "Enable mcips=true test variants" ON)
 
     target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/tests/qbox/include ${keystone_SOURCE_DIR}/include)
 
@@ -124,9 +126,21 @@ function(qbox_add_cpu_test target timeout_s)
             endif()
         endif()
 
+        # Only generate mcips=true when threading=MULTI and accel=tcg.
+        # For COROUTINE or SINGLE (or non-tcg), only mcips=false is generated.
+        set(mcips_variants false)
+        if(QBOX_ENABLE_MCIPS_TESTS AND "${threading}" STREQUAL "MULTI" AND "${accel}" STREQUAL "tcg")
+            set(mcips_variants true false)
+        endif()
 
-        foreach(num_cpu ${QBOX_CPU_TEST_NUM_CPU_COMBINATION})
-            set(test_name ${target}:sync-pol=${sync_pol}:num-cpu=${num_cpu}:icount=${icount}:threading=${threading}:accel=${accel})
+        foreach(mcips ${mcips_variants})
+          if(${mcips})
+              set(time_sync_strategy "mcips")
+          else()
+              set(time_sync_strategy "quantum_keeper")
+          endif()
+          foreach(num_cpu ${QBOX_CPU_TEST_NUM_CPU_COMBINATION})
+            set(test_name ${target}:sync-pol=${sync_pol}:num-cpu=${num_cpu}:icount=${icount}:threading=${threading}:accel=${accel}:time_sync_strategy=${time_sync_strategy})
 
             set (skip FALSE)
             foreach(tgt_name IN LISTS SKIP_TESTS)
@@ -159,6 +173,9 @@ function(qbox_add_cpu_test target timeout_s)
                                                  -p test-bench.inst_a.tcg_mode=${threading}
                                                  -p test-bench.inst_b.tcg_mode=${threading}
 
+                                                 -p test-bench.inst_a.time_sync_strategy=${time_sync_strategy}
+                                                 -p test-bench.inst_b.time_sync_strategy=${time_sync_strategy}
+
                                                  -p test-bench.bulkmem.max_block_size=1024
                                                  -p test-bench.bulkmem.min_block_size=32
 
@@ -176,6 +193,7 @@ function(qbox_add_cpu_test target timeout_s)
                 set_tests_properties(${test_name} PROPERTIES WILL_FAIL TRUE)
             endif()
             # --------------------------------------------------------------------------------
+          endforeach()
         endforeach()
       endforeach()
     endforeach()
