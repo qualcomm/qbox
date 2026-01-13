@@ -27,6 +27,10 @@ void CpuArm::post_init() { m_int->exports().cpu_arm_post_init(m_obj); }
 
 void CpuArm::register_reset() { m_int->exports().cpu_arm_register_reset(m_obj); }
 
+int CpuArm::arm_set_cpu_on_and_reset() { return m_int->exports().cpu_arm_set_cpu_on_and_reset(m_obj); }
+
+int CpuArm::arm_set_cpu_off() { return m_int->exports().cpu_arm_set_cpu_off(m_obj); }
+
 void CpuAarch64::set_aarch64_mode(bool aarch64_mode)
 {
     m_int->exports().cpu_aarch64_set_aarch64_mode(m_obj, aarch64_mode);

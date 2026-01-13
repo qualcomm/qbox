@@ -30,6 +30,9 @@ public:
 
     void post_init();
     void register_reset();
+
+    int arm_set_cpu_on_and_reset();
+    int arm_set_cpu_off();
 };
 
 class CpuAarch64 : public CpuArm
