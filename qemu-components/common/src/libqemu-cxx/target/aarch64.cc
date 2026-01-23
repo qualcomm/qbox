@@ -15,6 +15,11 @@ namespace qemu {
 
 void CpuArm::set_cp15_cbar(uint64_t cbar) { m_int->exports().cpu_arm_set_cp15_cbar(m_obj, cbar); }
 
+void CpuArm::set_imp_buildoptr(uint32_t imp_buildoptr)
+{
+    m_int->exports().cpu_arm_set_imp_buildoptr(m_obj, imp_buildoptr);
+}
+
 void CpuArm::add_nvic_link() { m_int->exports().cpu_arm_add_nvic_link(m_obj); }
 
 uint64_t CpuArm::get_exclusive_addr() const { return m_int->exports().cpu_arm_get_exclusive_addr(m_obj); }

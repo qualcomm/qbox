@@ -22,6 +22,7 @@ public:
     CpuArm(const Object& o): Cpu(o) {}
 
     void set_cp15_cbar(uint64_t cbar);
+    void set_imp_buildoptr(uint32_t imp_buildoptr);
     void add_nvic_link();
 
     uint64_t get_exclusive_addr() const;

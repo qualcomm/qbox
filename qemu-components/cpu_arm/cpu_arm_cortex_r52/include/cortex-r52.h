@@ -49,6 +49,7 @@ public:
     cci::cci_param<uint8_t> p_num_mpu_regions;
     cci::cci_param<uint8_t> p_num_mpu_hyp_regions;
     cci::cci_param<uint64_t> p_reset_cbar;
+    cci::cci_param<uint32_t> p_imp_buildoptr;
 
     QemuTargetSignalSocket irq_in;
     QemuTargetSignalSocket fiq_in;
@@ -81,6 +82,7 @@ public:
         , p_num_mpu_regions("pmsav7_dregion", 16, "PMSAv7 MPU number of supported regions")
         , p_num_mpu_hyp_regions("pmsav8r_hdregion", 16, "PMSAv8 MPU number of supported hyp regions")
         , p_reset_cbar("reset_cbar", 0ull, "Reset Configuration Base Address Register")
+        , p_imp_buildoptr("imp_buildoptr", 0ull, "IMP_BUILDOPTR Cortex R52 register value")
         , irq_in("irq_in")
         , fiq_in("fiq_in")
         , virq_in("virq_in")
@@ -110,6 +112,7 @@ public:
         cpu.set_prop_int("pmsav7-dregion", p_num_mpu_regions);
         cpu.set_prop_int("pmsav8r-hdregion", p_num_mpu_hyp_regions);
         cpu.set_prop_int("reset-cbar", p_reset_cbar);
+        cpu.set_imp_buildoptr(p_imp_buildoptr);
         if (!p_cntfrq_hz.is_default_value()) {
             cpu.set_prop_int("cntfrq", p_cntfrq_hz);
         }
