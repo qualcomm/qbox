@@ -175,11 +175,7 @@ macro(gs_create_dymod MODULE_NAME)
 
   install(
     TARGETS ${MODULE_NAME}
-    # we export the ${MODULE_NAME}, like that we can use ${MODULE_NAME} with qqvp.
-    EXPORT qqvpTargets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-            COMPONENT "${LIBRARY_NAME}_Runtime"
-            NAMELINK_COMPONENT "${LIBRARY_NAME}_Development"
   )
 
 endmacro()

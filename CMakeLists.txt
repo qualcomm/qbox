@@ -213,7 +213,6 @@ pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
 # CPM packages (fetched from source)
 gs_addexpackage("gh:google/googletest#v1.15.2")
 gs_addexpackage("gh:lua/lua#v5.4.2")
-gs_addexpackage("gh:rpclib/rpclib#v2.3.0")
 
 find_package(Git QUIET)
 if(Git_FOUND)
