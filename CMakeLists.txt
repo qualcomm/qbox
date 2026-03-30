@@ -412,10 +412,16 @@ target_include_directories(
 
 target_link_libraries(${PROJECT_NAME} PUBLIC
         ${TARGET_LIBS}
-        PkgConfig::LIBELF
-        Threads::Threads
+)
+
+target_link_libraries(${PROJECT_NAME} PUBLIC
         rpc
         ${CROW_DEP}
+)
+
+target_link_libraries(${PROJECT_NAME} PRIVATE
+        PkgConfig::LIBELF
+        Threads::Threads
         PkgConfig::LIBZIP
         ${PYBIND11_EMBED}
         ${CMAKE_DL_LIBS}
