@@ -220,7 +220,12 @@ function(qbox_add_cpu_test target timeout_s)
 
     target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/tests/qbox/include)
 
-    target_link_libraries(${target} PRIVATE cpu_arm_cortexA53 qemu_cpu_hexagon cpu_riscv32 global_peripheral_initiator router reset_gpio gs_memory smmu500 pass exclusive_monitor display plic_sifive ${TARGET_LIBS} hexagon_globalreg)
+    target_link_libraries(${target}
+        PRIVATE
+        cpu_arm_cortexA53 qemu_cpu_hexagon cpu_riscv32
+        global_peripheral_initiator router reset_gpio gs_memory smmu500 pass
+        exclusive_monitor display plic_sifive ${TARGET_LIBS} hexagon_globalreg
+    )
 
     foreach (accel ${QBOX_TEST_ACCELS})
       foreach(sync_pol ${QBOX_CPU_TEST_SYNC_POLICY_COMBINATION})
@@ -336,7 +341,7 @@ set(QBOX_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 function(qbox_extra_add_test target)
     add_executable(${target} ${ARGN})
     target_include_directories(${target} PRIVATE ${QBOX_TEST_DIR}/include)
-    target_link_libraries(${target} PRIVATE ${TARGET_LIBS} display)
+    target_link_libraries(${target} PRIVATE ${TARGET_LIBS} gtest gmock display)
     add_test(NAME ${target} COMMAND $<TARGET_FILE:${target}>)
 endfunction(qbox_extra_add_test)
 

@@ -1,0 +1,16 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Public dependencies that consumers need
+find_dependency(SystemCLanguage)
+find_dependency(SystemCCCI)
+find_dependency(fmt)
+find_dependency(reporting)
+
+# libqemu installs to a non-standard location
+list(APPEND CMAKE_PREFIX_PATH "${PACKAGE_PREFIX_DIR}/lib/libqemu")
+find_dependency(libqemu)
+
+include("${CMAKE_CURRENT_LIST_DIR}/qboxTargets.cmake")
+check_required_components(qbox)

@@ -196,61 +196,21 @@ macro(build_lua)
       if(NOT WIN32)
         target_compile_definitions(lua PRIVATE LUA_USE_POSIX)
       endif()
-      target_include_directories(lua PUBLIC $<BUILD_INTERFACE:${lua_SOURCE_DIR}>)
+      target_include_directories(lua PUBLIC
+          $<BUILD_INTERFACE:${lua_SOURCE_DIR}>
+          $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+      )
       target_compile_definitions(${PROJECT_NAME} INTERFACE HAS_LUA)
       target_link_libraries(${PROJECT_NAME} PUBLIC lua)
       list(APPEND TARGET_LIBS "lua")
-      install(TARGETS lua EXPORT ${PROJECT_NAME}Targets)
+      install(TARGETS lua EXPORT qboxTargets LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+      install(FILES ${lua_SOURCE_DIR}/lua.h ${lua_SOURCE_DIR}/luaconf.h
+                    ${lua_SOURCE_DIR}/lualib.h ${lua_SOURCE_DIR}/lauxlib.h
+              DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
   endif()
 endmacro()
 ################################################################################
 
-# ----- configure include paths and EXPORT PROJECT
-macro(gs_export)
-  if (NOT GS_ONLY)
-    set(LIBRARY_NAME ${PROJECT_NAME})
-    if (${ARGC} GREATER 0)
-      set(LIBRARY_NAME ${ARGV0})
-    endif()
-
-    # We are checking if the second parameters is used like that we are backwards compatible because old versions just used one parameter.
-    if(NOT "${ARGV1}" STREQUAL "")
-      set(INCLUDE_REPO ${ARGV1})
-    else()
-      set(INCLUDE_REPO ${PROJECT_SOURCE_DIR}/include)
-    endif()
-
-    message(STATUS "LIBRARY_NAME = ${LIBRARY_NAME}")
-    string(TOLOWER ${LIBRARY_NAME}/version.h VERSION_HEADER_LOCATION)
-    add_library("lib${LIBRARY_NAME}" ALIAS ${LIBRARY_NAME})
-    add_library("GreenSocs::lib${LIBRARY_NAME}" ALIAS ${LIBRARY_NAME})
-    packageproject(
-      NAME
-      "${LIBRARY_NAME}"
-      VERSION
-      ${PROJECT_VERSION}
-      NAMESPACE
-      GreenSocs
-      BINARY_DIR
-      ${PROJECT_BINARY_DIR}
-      INCLUDE_DIR
-      ${INCLUDE_REPO}
-      INCLUDE_DESTINATION
-      ${CMAKE_INSTALL_INCLUDEDIR}
-      VERSION_HEADER
-      "${VERSION_HEADER_LOCATION}"
-      COMPATIBILITY
-      SameMajorVersion)
-    install(
-      TARGETS ${LIBRARY_NAME}
-      LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-              COMPONENT "${LIBRARY_NAME}_Runtime"
-              NAMELINK_COMPONENT "${LIBRARY_NAME}_Development"
-    )
-    list(APPEND TARGET_LIBS "GreenSocs::${LIBRARY_NAME}")
-    set(TARGET_LIBS "${TARGET_LIBS}" CACHE INTERNAL "target_libs")
-  endif()
-endmacro()
 
 # by default switch on verbosity
 
@@ -265,7 +225,6 @@ macro(gs_enable_testing)
             RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
           )
         endif()
-        target_link_libraries(${PROJECT_NAME} INTERFACE gtest gmock)
       endif()
       enable_testing()
       cmake_host_system_information(RESULT _nproc QUERY NUMBER_OF_LOGICAL_CORES)

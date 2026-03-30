@@ -10,10 +10,12 @@ add_executable(remote_cpu
 
 target_link_libraries(cortex-m55-vp
     ${TARGET_LIBS}
+    rpc
 )
 
 target_link_libraries(remote_cpu
     ${TARGET_LIBS}
+    rpc
 )
 
 target_include_directories(

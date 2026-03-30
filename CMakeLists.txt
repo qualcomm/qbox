@@ -213,7 +213,7 @@ pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
 # CPM packages (fetched from source)
 gs_addexpackage("gh:google/googletest#v1.15.2")
 gs_addexpackage("gh:lua/lua#v5.4.2")
-gs_addexpackage("gh:TheLartians/PackageProject.cmake@1.4.1")
+gs_addexpackage("gh:rpclib/rpclib#v2.3.0")
 
 find_package(Git QUIET)
 if(Git_FOUND)
@@ -395,8 +395,8 @@ endif (APPLE)
 target_include_directories(
     ${PROJECT_NAME} PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/systemc-components/common/include>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}>
-    )
+    $<INSTALL_INTERFACE:systemc-components/common/include>
+)
 
 # reg_model_maker.cc (compiled into the core qbox library) includes
 # <gs_memory.h>, <router.h> and <reg_router.h>, which live in their
@@ -414,12 +414,9 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
         ${TARGET_LIBS}
 )
 
-target_link_libraries(${PROJECT_NAME} PUBLIC
+target_link_libraries(${PROJECT_NAME} PRIVATE
         rpc
         ${CROW_DEP}
-)
-
-target_link_libraries(${PROJECT_NAME} PRIVATE
         PkgConfig::LIBELF
         Threads::Threads
         PkgConfig::LIBZIP
@@ -429,8 +426,43 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/systemc-components" DESTINATION ${CMAKE_INSTALL_PREFIX})
 
-set(QBOX_INCLUDE_DIR "${QEMU_INCLUDE_DIR};${CMAKE_CURRENT_SOURCE_DIR}/systemc-components")
-gs_export(${PROJECT_NAME} ${QBOX_INCLUDE_DIR})
+# --- Package configuration for find_package(qbox) ---
+include(CMakePackageConfigHelpers)
+
+add_library("qbox::${PROJECT_NAME}" ALIAS ${PROJECT_NAME})
+
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/qboxConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+
+configure_package_config_file(
+    cmake/qboxConfig.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/qboxConfig.cmake"
+    INSTALL_DESTINATION lib/cmake/qbox-${PROJECT_VERSION}
+)
+
+install(TARGETS ${PROJECT_NAME}
+    EXPORT qboxTargets
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            COMPONENT qbox_Runtime
+            NAMELINK_COMPONENT qbox_Development
+)
+
+install(EXPORT qboxTargets
+    NAMESPACE qbox::
+    DESTINATION lib/cmake/qbox-${PROJECT_VERSION}
+)
+
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/qboxConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/qboxConfigVersion.cmake"
+    DESTINATION lib/cmake/qbox-${PROJECT_VERSION}
+)
+
+list(APPEND TARGET_LIBS "qbox::${PROJECT_NAME}")
+set(TARGET_LIBS "${TARGET_LIBS}" CACHE INTERNAL "target_libs")
 
 if (NOT DEFINED GS_ONLY)
     install(TARGETS rpc)
