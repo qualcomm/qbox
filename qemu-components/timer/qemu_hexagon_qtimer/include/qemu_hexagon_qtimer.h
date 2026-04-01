@@ -11,6 +11,8 @@
 
 #include <string>
 #include <cassert>
+#include <memory>
+#include <vector>
 
 #include <device.h>
 #include <ports/target.h>
@@ -23,8 +25,11 @@ class qemu_hexagon_qtimer : public QemuDevice
 protected:
     cci::cci_param<unsigned int> p_nr_frames;
     cci::cci_param<unsigned int> p_nr_views;
-    cci::cci_param<unsigned int> p_cnttid;
     cci::cci_param<unsigned int> p_frame_stride;
+    cci::cci_param<std::string> p_ticker_ctrl;
+    /* One cnttid register covers 8 frames (4 bits/nibble per frame in a 32-bit register).
+     * Number of cnttid registers = ceil(nr_frames / 8). */
+    std::vector<std::unique_ptr<cci::cci_param<unsigned int>>> p_cnttid;
 
 public:
     QemuTargetSocket<> socket;
@@ -49,12 +54,19 @@ public:
         : QemuDevice(nm, inst, "qct-qtimer")
         , p_nr_frames("nr_frames", 2, "Number of frames")
         , p_nr_views("nr_views", 1, "Number of views")
-        , p_cnttid("cnttid", 0x11, "Value of cnttid")
         , p_frame_stride("frame_stride", 0x1000, "Frame stride in bytes")
+        , p_ticker_ctrl("ticker_ctrl", "auto", "Start the QTIMER by ticking or no (auto/on/off)")
         , socket("mem", inst)
         , view_socket("mem_view", inst)
         , irq("irq", p_nr_frames.get_value(), [](const char* n, size_t i) { return new QemuInitiatorSignalSocket(n); })
     {
+        /* 4 bits (one nibble) per frame in a 32-bit cnttid register -> 8 frames per register */
+        unsigned int nr_cnttid = (p_nr_frames.get_value() + 7) / 8;
+        for (unsigned int i = 0; i < nr_cnttid; ++i) {
+            p_cnttid.push_back(std::make_unique<cci::cci_param<unsigned int>>(
+                std::string("cnttid_") + std::to_string(i), (i == 0) ? 0x11u : 0x0u,
+                std::string("Value of cnttid_") + std::to_string(i)));
+        }
     }
 
     void before_end_of_elaboration() override
@@ -63,8 +75,11 @@ public:
 
         m_dev.set_prop_int("nr_frames", p_nr_frames);
         m_dev.set_prop_int("nr_views", p_nr_views);
-        m_dev.set_prop_int("cnttid_0", p_cnttid);
         m_dev.set_prop_int("frame_stride", p_frame_stride);
+        m_dev.set_prop_str("ticker-ctrl", p_ticker_ctrl.get_value().c_str());
+        for (unsigned int i = 0; i < p_cnttid.size(); ++i) {
+            m_dev.set_prop_int((std::string("cnttid_") + std::to_string(i)).c_str(), *p_cnttid[i]);
+        }
     }
 
     void end_of_elaboration() override
