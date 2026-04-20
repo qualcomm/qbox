@@ -161,11 +161,16 @@ public:
             SCP_DEBUG(SCMOD) << "TB cache invalidation completed";
 
             /*
-             * Triggers the reset, this is setup via "sensitive << reset_event" above
-             * Use a larger delay to ensure firmware loading and TB flushing complete first
-             * Increased delay for COROUTINE threading mode compatibility
+             * Triggers the reset, this is setup via "sensitive << reset_event" above.
+             * Use a delta notification (SC_ZERO_TIME) so it fires in the next
+             * delta cycle at the current simulation time.  A timed delay (e.g.
+             * 1 SC_US) would require SystemC time to advance, which in mcips
+             * mode only happens when the sync_window moves forward, leaving
+             * the event stranded while the CPU spins in a tight MMIO loop.
+             * Firmware loading and TB invalidation are already complete before
+             * this point, so no additional delay is needed.
              */
-            reset_event.notify(sc_core::sc_time(1, sc_core::SC_US));
+            reset_event.notify(sc_core::SC_ZERO_TIME);
             break;
         case RESET_DONE:
             /*
