@@ -1,3 +1,4 @@
 add_subdirectory(qcom_ipcc)
 add_subdirectory(qcom_tcsr)
 add_subdirectory(qcom_dspss_pub)
+add_subdirectory(qcom_wdog)
