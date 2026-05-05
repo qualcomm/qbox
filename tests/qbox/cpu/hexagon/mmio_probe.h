@@ -10,9 +10,10 @@
 #include <router.h>
 #include <systemc>
 #include <tlm>
+#include <tlm_utils/simple_target_socket.h>
 #include <tlm_sockets_buswidth.h>
 
-#include "test.h"
+// Requires TEST_FAIL macro from caller (e.g., test/test.h)
 
 struct MmioReader {
     virtual uint64_t mmio_read(int id, uint64_t addr, size_t len) = 0;
