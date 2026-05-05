@@ -1,0 +1,1 @@
+gs_create_dymod(qcom_qdsp6ss_clkctl)
