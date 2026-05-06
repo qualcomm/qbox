@@ -11,3 +11,4 @@ TAGS
 .DS_Store
 __pycache__
 .worktrees
+*.zip
