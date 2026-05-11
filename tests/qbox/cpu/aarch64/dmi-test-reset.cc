@@ -70,44 +70,17 @@ public:
         dont_initialize();
 
         // Load firmware from binary file
-        load_firmware_binary();
+        load_dmi_reset_firmware();
     }
 
     virtual ~CpuArmCortexA53DmiResetTest() {}
 
 private:
-    void load_firmware_binary()
+    void load_dmi_reset_firmware()
     {
-        // Load the compiled firmware binary
-        const char* firmware_path = FIRMWARE_BIN_PATH;
-        std::ifstream file(firmware_path, std::ios::binary | std::ios::ate);
-
-        if (!file.is_open()) {
-            SCP_FATAL(SCMOD) << "Failed to open firmware file: " << firmware_path;
-            TEST_ASSERT(false);
-        }
-
-        std::streamsize size = file.tellg();
-        file.seekg(0, std::ios::beg);
-
-        std::vector<uint8_t> firmware_data(size);
-        if (!file.read(reinterpret_cast<char*>(firmware_data.data()), size)) {
-            SCP_FATAL(SCMOD) << "Failed to read firmware file: " << firmware_path;
-            TEST_ASSERT(false);
-        }
-
-        // Patch the addresses in the binary
-        // The constants are at the end of the binary (last 16 bytes)
-        if (size >= 16) {
-            uint64_t* mmio_addr_ptr = reinterpret_cast<uint64_t*>(firmware_data.data() + size - 16);
-            uint64_t* dmi_addr_ptr = reinterpret_cast<uint64_t*>(firmware_data.data() + size - 8);
-
-            *mmio_addr_ptr = CpuTesterDmi::MMIO_ADDR;
-            *dmi_addr_ptr = CpuTesterDmi::DMI_ADDR;
-        }
-
-        // Load the firmware data directly into memory without keystone assembly
-        m_mem.load.ptr_load(firmware_data.data(), 0, size);
+        load_firmware_binary(
+            FIRMWARE_BIN_PATH, MEM_ADDR,
+            { static_cast<uint64_t>(CpuTesterDmi::MMIO_ADDR), static_cast<uint64_t>(CpuTesterDmi::DMI_ADDR) });
     }
 
     virtual void mmio_write(int id, uint64_t addr, uint64_t data, size_t len) override

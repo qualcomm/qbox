@@ -8,7 +8,6 @@
 
 #include <systemc>
 
-#include <cstdio>
 #include <vector>
 #include <scp/report.h>
 #include <cci/utils/broker.h>
@@ -36,66 +35,13 @@ class CpuArmCortexA53WriteReadTest : public CpuArmTestBench<cpu_arm_cortexA53, C
 public:
     static constexpr uint64_t NUM_WRITES = 10 * 1024;
 
-    static constexpr const char* FIRMWARE = R"(
-        _start:
-            ldr x1, =0x%08)" PRIx64 R"(
-            ldr x3, =0x%08)" PRIx64 R"(
-            ldr x10,=0x%08)" PRIx64 R"(
-
-            mrs x0, mpidr_el1
-
-            and x2, x0, #0xff
-            and x0, x0, #0xff00
-            lsr x0, x0, #5
-            orr  x0, x0, x2
-
-            lsl x0, x0, #3
-            add x1, x1, x0
-
-            mov x0, #0
-            mov x9, x3
-        loop:
-            str x0, [x9]
-            add x9, x9, #8
-            add x0, x0, #1
-            cmp x0, x10
-            b.ne loop
-       
-            mov x0, #0
-            mov x9, x3
-        loop2:
-            ldr x4, [x9]
-            cmp x0, x4
-            b.ne fail
-            add x9, x9, #8
-            add x0, x0, #1
-            cmp x0, x10
-            b.ne loop2
-
-        end:
-            wfi
-            mov x0, #0
-            str x0, [x1]
-            b end
-
-        fail:
-            str x9, [x1]
-            str x0, [x1]
-            str x4, [x1]
-            mov x0, #-1
-            str x0, [x1]
-            b end
-    )";
-
-protected:
 public:
     CpuArmCortexA53WriteReadTest(const sc_core::sc_module_name& n): CpuArmTestBench<cpu_arm_cortexA53, CpuTesterMmio>(n)
     {
-        char buf[1024];
-
-        std::snprintf(buf, sizeof(buf), FIRMWARE, CpuTesterMmio::MMIO_ADDR, CpuTestBench::BULKMEM_ADDR,
-                      NUM_WRITES / p_num_cpu);
-        set_firmware(buf);
+        load_firmware_binary(
+            FIRMWARE_BIN_PATH, MEM_ADDR,
+            { static_cast<uint64_t>(CpuTesterMmio::MMIO_ADDR), static_cast<uint64_t>(CpuTestBench::BULKMEM_ADDR),
+              static_cast<uint64_t>(NUM_WRITES / p_num_cpu) });
     }
 
     virtual ~CpuArmCortexA53WriteReadTest() {}
@@ -122,7 +68,5 @@ public:
         CpuArmTestBench<cpu_arm_cortexA53, CpuTesterMmio>::end_of_simulation();
     }
 };
-
-constexpr const char* CpuArmCortexA53WriteReadTest::FIRMWARE;
 
 int sc_main(int argc, char* argv[]) { return run_testbench<CpuArmCortexA53WriteReadTest>(argc, argv); }

@@ -7,31 +7,25 @@
  */
 
 #include <systemc>
-#include <array>
 #include <cstdio>
-#include <memory>
+#include <fstream>
 #include <vector>
 #include <queue>
-#include <thread>
 #include <scp/report.h>
 #include <cci/utils/broker.h>
 #include <libgsutils.h>
 #include <cciutils.h>
 #include <argparser.h>
-#include <keystone/keystone.h>
 #include <tlm_utils/tlm_quantumkeeper.h>
 #include "cci/cfg/cci_broker_if.h"
-#include "sysc/kernel/sc_time.h"
 #include "test/cpu.h"
 #include "test/tester/mmio.h"
-#include <hexagon.h>
-#include <hexagon_globalreg.h>
-#include <qemu-instance.h>
+#include "cortex-a53.h"
+#include "qemu-instance.h"
 #include <router.h>
 #include <gs_memory.h>
 #include <smmu500.h>
 #include <tlm_utils/simple_initiator_socket.h>
-#include <tlm-extensions/pathid_extension.h>
 #include <pass.h>
 
 /*
@@ -142,7 +136,6 @@ public:
     static constexpr uint64_t REG_ITERATIONS = 0x20; // CPU reads: current iteration count
     static constexpr uint64_t REG_DEBUG = 0x28;      // CPU writes: debug messages
     static constexpr uint64_t REG_DEBUG_DATA = 0x30; // CPU writes: debug messages
-    static constexpr uint64_t REG_CPU_ID = 0x48;     // CPU reads: global CPU ID (from pathid)
 
     // Request types
     enum RequestType { NONE = 0, FILL_REQUEST = 1, CHECK_REQUEST = 2 };
@@ -163,7 +156,7 @@ public:
     tlm_utils::simple_target_socket<SMMUTesterController> socket;
 
     // Reference to parent test bench for SMMU control
-    class CpuHexagonSMMUStressTestV2* m_parent;
+    class CpuArmCortexA53SMMUStressTestV2* m_parent;
 
     std::vector<CPUState> m_cpu_states;
     std::queue<uint32_t> m_available_regions;
@@ -198,23 +191,13 @@ public:
                          << " regions, target " << target_iterations << " iterations";
     }
 
-    void set_parent(class CpuHexagonSMMUStressTestV2* parent) { m_parent = parent; }
+    void set_parent(class CpuArmCortexA53SMMUStressTestV2* parent) { m_parent = parent; }
 
     virtual void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
     {
         uint64_t addr = trans.get_address();
-        uint64_t reg_offset = addr; // No per-CPU offset, just use address directly
-
-        // Extract CPU ID from pathid extension
-        gs::PathIDExtension* ext = nullptr;
-        trans.get_extension(ext);
-        sc_assert(ext);
-        // 0,1 , 4,5 , 8,9 is CPU_0, 2, 4, ....
-        // 2,3 , 6,7 , 10,11 is CPU_1, 3, 5, ....
-        uint32_t port_id = ext->at(1);
-        uint32_t cpu_id = port_id >> 1; // Extract global CPU ID from pathid
-
-        SCP_DEBUG(())("Came through port {}, giving CPU_ID {}", ext->at(1), cpu_id);
+        uint32_t cpu_id = static_cast<uint32_t>(addr / REG_SIZE_PER_CPU);
+        uint64_t reg_offset = addr % REG_SIZE_PER_CPU;
 
         if (cpu_id >= m_num_cpus) {
             trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
@@ -289,27 +272,12 @@ private:
             data = m_global_iterations;
             break;
 
-        case REG_CPU_ID:
-            data = cpu_id; // Return the global CPU ID from pathid
-            break;
-
         default:
             SCP_FATAL(()) << "CPU " << cpu_id << " read from unknown register 0x" << std::hex << reg_offset;
             break;
         }
 
-        // Handle both 32-bit and 64-bit reads
-        unsigned int data_length = trans.get_data_length();
-        if (data_length == 4) {
-            // 32-bit read (memw instruction)
-            *reinterpret_cast<uint32_t*>(trans.get_data_ptr()) = static_cast<uint32_t>(data & 0xFFFFFFFF);
-        } else if (data_length == 8) {
-            // 64-bit read (memd instruction)
-            *reinterpret_cast<uint64_t*>(trans.get_data_ptr()) = data;
-        } else {
-            SCP_FATAL(()) << "CPU " << cpu_id << " unsupported read size " << data_length << " bytes from register 0x"
-                          << std::hex << reg_offset;
-        }
+        *reinterpret_cast<uint64_t*>(trans.get_data_ptr()) = data;
     }
 
     /**
@@ -343,6 +311,9 @@ private:
                 // Configure SMMU mapping for this CPU to this region
                 configure_smmu_mapping(cpu_id, region);
 
+                // Mark as ready
+                cpu.status = READY;
+
                 SCP_INFO((TEST)) << "CPU_" << cpu_id << " assigned region " << region << " for filling";
             } else {
                 cpu.status = BUSY; // No regions available
@@ -360,6 +331,9 @@ private:
                 // Configure SMMU mapping for this CPU to this region
                 configure_smmu_mapping(cpu_id, region);
 
+                // Mark as ready
+                cpu.status = READY;
+
                 SCP_INFO((TEST)) << "CPU_" << cpu_id << " assigned region " << region << " for checking";
             } else {
                 cpu.status = BUSY; // No regions to check
@@ -368,7 +342,7 @@ private:
         }
     }
 
-    // Definition moved after CpuHexagonSMMUStressTestV2
+    // Definition moved after CpuArmCortexA53SMMUStressTestV2 below
 
     void handle_debug(uint32_t cpu_id, uint64_t data)
     {
@@ -434,8 +408,8 @@ private:
 };
 
 /**
- * @class CpuHexagonSMMUStressTestV2
- * @brief A SystemC test bench for stressing the SMMUv2 with multiple Hexagon CPUs.
+ * @class CpuArmCortexA53SMMUStressTestV2
+ * @brief A SystemC test bench for stressing the SMMUv2 with multiple CPUs.
  *
  * This test implements a sophisticated, tester-controlled architecture to
  * stress the SMMU-500. Unlike traditional approaches where CPUs manage their
@@ -472,10 +446,10 @@ private:
  * SMMU, capable of handling multiple CPUs concurrently without data corruption
  * or synchronization failures.
  */
-class CpuHexagonSMMUStressTestV2 : public TestBench, public CpuTesterCallbackIface
+class CpuArmCortexA53SMMUStressTestV2 : public TestBench, public CpuTesterCallbackIface
 {
 public:
-    static constexpr uint16_t MAX_ITERATIONS = 0x7fff; // Limited to 16-bit for ARM64 movz instruction
+    static constexpr uint16_t MAX_ITERATIONS = 0x7ff; // Limited to 16-bit for ARM64 movz instruction
     static constexpr uint64_t PATTERN_SIZE = 16;
     static constexpr unsigned BOUNDARY_BYTES = 80;
     sc_core::sc_time TEST_DURATION = sc_core::sc_time(30, sc_core::SC_SEC);
@@ -494,7 +468,7 @@ public:
     static constexpr size_t MAIN_MEM_SIZE = 256 * 1024 * 1024; // 256MB for main memory
 
     // Virtual and physical memory regions - Use high virtual address >32-bit
-    static constexpr uint64_t VIRTUAL_TEST_ADDR = 0x300000000ULL; // 12GB virtual address
+    static constexpr uint64_t VIRTUAL_TEST_ADDR = 0x80000000ULL; // 12GB virtual address
     static constexpr uint64_t
         PAGE_TABLE_BASE = 0x10000000; // Page tables: 0x10000000 - 0x1007FFFF (512KB for up to 32 CPUs)
     static constexpr uint64_t REGION_BASE = 0x10080000; // Test regions: 0x10080000+ in 8KB blocks (after page tables)
@@ -521,11 +495,8 @@ protected:
     QemuInstanceManager m_inst_manager;
     QemuInstance m_inst_a;
     QemuInstance m_inst_b;
-    hexagon_globalreg m_hex_gregs_a;
-    hexagon_globalreg m_hex_gregs_b;
     bool ab = false;
-    sc_core::sc_vector<qemu_cpu_hexagon> m_cpus;
-    std::array<std::unique_ptr<hexagon_tlb>, 2> m_tlbs;
+    sc_core::sc_vector<cpu_arm_cortexA53> m_cpus;
 
     // Memory components
     gs::gs_memory<> m_mem;
@@ -546,8 +517,6 @@ protected:
 
     uint32_t m_num_regions;
     std::vector<uint32_t> m_cpu_to_region;
-
-    tlm_utils::simple_target_socket<SMMUTesterController> invalidate_dummy_socket;
 
 public:
     // Memory accessor for proper routing - made public for tester access
@@ -601,49 +570,57 @@ private:
     void reconfigure_context_bank(uint32_t cb, uint64_t page_table_addr);
 
 protected:
-    void set_firmware_from_binary(const uint8_t* binary, size_t size, uint64_t addr = 0)
+    // Firmware is assembled ahead of time from
+    // smmu-router-stress-test-v2.S — all layout constants are baked in at
+    // build time, so we just load the .bin at 0x0 and the three sub-blobs
+    // (boot @ 0x0, diagnostic @ 0x200, main @ 0x1000) land at their expected
+    // offsets automatically.
+    void load_stress_test_firmware()
     {
-        m_mem.load.ptr_load(const_cast<uint8_t*>(binary), addr, size);
-        SCP_INFO(()) << "Loaded " << size << " bytes of Hexagon firmware at 0x" << std::hex << addr;
-    }
-
-    void dmi_invalidation_thread()
-    {
-        while (true) {
-            wait(sc_core::sc_time((rand() % 100) * 100, sc_core::SC_US)); // Very frequent
-
-            // Invalidate random regions
-            //            uint64_t addr = REGION_BASE + (rand() % m_num_regions) * REGION_SIZE;
-            invalidate_dummy_socket->invalidate_direct_mem_ptr(REGION_BASE, 0xffffffff);
-            SCP_WARN(())("Invalidate All from (0x{:x})", REGION_BASE);
+        std::ifstream file(FIRMWARE_BIN_PATH, std::ios::binary | std::ios::ate);
+        if (!file.is_open()) {
+            SCP_FATAL(()) << "Failed to open firmware file: " << FIRMWARE_BIN_PATH;
+            TEST_FAIL("Failed to open firmware file");
         }
+        std::streamsize size = file.tellg();
+        file.seekg(0, std::ios::beg);
+        std::vector<uint8_t> data(size);
+        if (!file.read(reinterpret_cast<char*>(data.data()), size)) {
+            SCP_FATAL(()) << "Failed to read firmware file: " << FIRMWARE_BIN_PATH;
+            TEST_FAIL("Failed to read firmware file");
+        }
+        m_mem.load.ptr_load(data.data(), MEM_ADDR, size);
     }
 
 public:
-    CpuHexagonSMMUStressTestV2(const sc_core::sc_module_name& n)
+    CpuArmCortexA53SMMUStressTestV2(const sc_core::sc_module_name& n)
         : TestBench(n)
         , p_num_cpu("num_cpu", 4, "Number of CPUs to instantiate in the test")
         , p_quantum_ns("quantum_ns", 1000000, "Value of the global TLM-2.0 quantum in ns")
-        , m_inst_a("inst_a", &m_inst_manager, qemu_cpu_hexagon::ARCH)
-        , m_inst_b("inst_b", &m_inst_manager, qemu_cpu_hexagon::ARCH)
-        , m_hex_gregs_a("hex_gregs_a", &m_inst_a)
-        , m_hex_gregs_b("hex_gregs_b", &m_inst_b)
+        , m_inst_a("inst_a", &m_inst_manager, cpu_arm_cortexA53::ARCH)
+        , m_inst_b("inst_b", &m_inst_manager, cpu_arm_cortexA53::ARCH)
         , m_cpus("cpu", p_num_cpu,
                  [this](const char* n, int i) {
                      ab = !ab;
-                     return new qemu_cpu_hexagon(n, ab ? m_inst_a : m_inst_b);
+                     return new cpu_arm_cortexA53(n, ab ? m_inst_a : m_inst_b);
                  })
         , m_mem("mem", MEM_SIZE)
         , m_main_mem("main_mem", MAIN_MEM_SIZE)
         , m_smmu("smmu")
         , m_global_router("global_router")
         , m_tester_controller("tester_controller", p_num_cpu.get_value(),
-                              std::max(3u, static_cast<uint32_t>(p_num_cpu.get_value() * 3)),
-                              MAX_ITERATIONS / p_num_cpu)
+                              std::max(3u, static_cast<uint32_t>(p_num_cpu.get_value() * 3)), MAX_ITERATIONS)
         , m_memory_accessor("memory_accessor")
-        , invalidate_dummy_socket("dummy_invalidate_socket")
     {
         using tlm_utils::tlm_quantumkeeper;
+
+        // Set up ARM-specific CPU configuration
+        int i = 0;
+        for (cpu_arm_cortexA53& cpu : m_cpus) {
+            cpu.p_mp_affinity = i++;
+            cpu.p_has_el3 = false;
+            cpu.p_has_el2 = false; // Un-needed and unavailable for HVF/KVM
+        }
 
         sc_core::sc_time global_quantum(p_quantum_ns, sc_core::SC_NS);
         tlm_quantumkeeper::set_global_quantum(global_quantum);
@@ -670,18 +647,6 @@ public:
         uint32_t num_cpus = p_num_cpu.get_value();
         m_pass_identity.resize(num_cpus);
         m_tbus_high_va.resize(num_cpus);
-        // Hexagon HW has one TLB per core shared by all HW threads; here each
-        // QEMU instance plays the role of a core, so we create exactly two
-        // TLBs and link every CPU to the one on its instance.
-        m_tlbs[0] = std::make_unique<hexagon_tlb>("cpu_tlb_a", m_inst_a);
-        m_tlbs[1] = std::make_unique<hexagon_tlb>("cpu_tlb_b", m_inst_b);
-        for (auto& tlb : m_tlbs) {
-            tlb->p_num_entries = 256;
-            tlb->p_dma_entries = 16;
-        }
-        for (uint32_t i = 0; i < num_cpus; ++i) {
-            m_cpus[i].set_hex_tlb(m_tlbs[i % 2].get());
-        }
 
         for (uint32_t i = 0; i < num_cpus; ++i) {
             // Identity pass-through for each CPU - bypasses SMMU for identity traffic
@@ -713,9 +678,6 @@ public:
         // Initialize CPU to region mapping
         m_cpu_to_region.resize(p_num_cpu.get_value(), 0xFFFFFFFF);
 
-        m_hex_gregs_a.p_hexagon_start_addr = BOOT_ADDR;
-        m_hex_gregs_b.p_hexagon_start_addr = BOOT_ADDR;
-
         // Set up tester controller parent reference
         m_tester_controller.set_parent(this);
 
@@ -732,10 +694,9 @@ public:
             m_cpu_routers[i]->add_target(m_tbus_high_va[i]->upstream_socket, VIRTUAL_TEST_ADDR, 0x10000000ULL);
 
             SCP_INFO(()) << "🔍 ROUTING DEBUG: CPU " << i << " -> CPU_Router_" << i;
-            SCP_INFO(()) << "  - Identity range [0x0 - 0x" << std::hex << VIRTUAL_TEST_ADDR << "] -> Pass_Identity_"
-                         << i << " (bypassing SMMU)";
-            SCP_INFO(()) << "  - High VA range [0x" << std::hex << VIRTUAL_TEST_ADDR << " - end] -> High_VA_TBU_" << i
-                         << " (StreamID " << (i + 1) << ")";
+            SCP_INFO(()) << "  - Identity range [0x0 - 0x10000000] -> Pass_Identity_" << i << " (bypassing SMMU)";
+            SCP_INFO(()) << "  - High VA range [0x300000000 - 0x400000000] -> High_VA_TBU_" << i << " (StreamID "
+                         << (i + 1) << ")";
             SCP_INFO(()) << "  - Identity pass name: " << m_pass_identity[i]->name();
             SCP_INFO(()) << "  - High VA TBU name: " << m_tbus_high_va[i]->name();
         }
@@ -766,17 +727,12 @@ public:
         SCP_INFO(()) << "  TESTER: 0x" << std::hex << TESTER_ADDR;
         SCP_INFO(()) << "  VIRTUAL_TEST: 0x" << std::hex << VIRTUAL_TEST_ADDR;
 
-        SCP_INFO(()) << "🔥 ABOUT TO CALL load_hexagon_firmware()";
-        load_hexagon_firmware();
-        SCP_INFO(()) << "🔥 AFTER CALLING load_hexagon_firmware()";
+        load_stress_test_firmware();
 
         SC_THREAD(configure_test);
-
-        m_global_router.add_target(invalidate_dummy_socket, 0, 0);
-        SC_THREAD(dmi_invalidation_thread);
     }
 
-    virtual ~CpuHexagonSMMUStressTestV2()
+    virtual ~CpuArmCortexA53SMMUStressTestV2()
     {
         for (auto* pass : m_pass_identity) {
             delete pass;
@@ -787,30 +743,6 @@ public:
         }
         for (auto* router : m_cpu_routers) {
             delete router;
-        }
-    }
-
-    void before_end_of_elaboration() override
-    {
-        TestBench::before_end_of_elaboration();
-
-        m_hex_gregs_a.before_end_of_elaboration();
-        m_hex_gregs_b.before_end_of_elaboration();
-
-        qemu::Device hex_gregs_a_dev = m_hex_gregs_a.get_qemu_dev();
-        qemu::Device hex_gregs_b_dev = m_hex_gregs_b.get_qemu_dev();
-
-        for (int i = 0; i < m_cpus.size(); i++) {
-            auto& cpu = m_cpus[i];
-            cpu.before_end_of_elaboration();
-            cpu.p_vtcm_base_addr = REGION_BASE;
-            cpu.p_vtcm_size_kb = REGION_SIZE / 1024;
-            cpu.p_hexagon_num_threads = (m_cpus.size() + 1) / 2;
-            qemu::Device cpu_dev = cpu.get_qemu_dev();
-
-            // Link to appropriate global regs based on which instance
-            bool uses_inst_a = (i % 2 == 0);
-            cpu_dev.set_prop_link("global-regs", uses_inst_a ? hex_gregs_a_dev : hex_gregs_b_dev);
         }
     }
 
@@ -995,9 +927,9 @@ public:
         uint64_t l3_readback = m_memory_accessor.read_memory(l3_table_addr + (0 * 8));
 
         SCP_INFO(()) << "  - L3[0]: VA=0x0 -> PA=0x" << std::hex << default_physical_addr << " (CPU " << cpu
-                     << " specific default mapping)"
-                     << "  - L3 table address: 0x" << std::hex << l3_table_addr << "  - L3[0] descriptor written: 0x"
-                     << std::hex << l3_desc_0 << "  - L3[0] descriptor readback: 0x" << std::hex << l3_readback
+                     << " specific default mapping)" << "  - L3 table address: 0x" << std::hex << l3_table_addr
+                     << "  - L3[0] descriptor written: 0x" << std::hex << l3_desc_0
+                     << "  - L3[0] descriptor readback: 0x" << std::hex << l3_readback
                      << "  - Writing L3[0] to address: 0x" << std::hex << (l3_table_addr + (0 * 8));
 
         if (l3_readback != l3_desc_0) {
@@ -1040,18 +972,19 @@ public:
     }
     void clear_region_pattern(uint32_t region_id)
     {
-        uint64_t physical_addr = CpuHexagonSMMUStressTestV2::REGION_BASE +
-                                 (region_id * CpuHexagonSMMUStressTestV2::REGION_SIZE);
+        uint64_t physical_addr = CpuArmCortexA53SMMUStressTestV2::REGION_BASE +
+                                 (region_id * CpuArmCortexA53SMMUStressTestV2::REGION_SIZE);
 
         SCP_INFO(()) << "Clearing region " << region_id << " (2-PAGE) at physical address 0x" << std::hex
                      << physical_addr;
 
-        const uint32_t words_to_clear = CpuHexagonSMMUStressTestV2::BOUNDARY_BYTES / 8;
-        const uint32_t num_pages = CpuHexagonSMMUStressTestV2::REGION_SIZE / CpuHexagonSMMUStressTestV2::PAGE_SIZE;
+        const uint32_t words_to_clear = CpuArmCortexA53SMMUStressTestV2::BOUNDARY_BYTES / 8;
+        const uint32_t num_pages = CpuArmCortexA53SMMUStressTestV2::REGION_SIZE /
+                                   CpuArmCortexA53SMMUStressTestV2::PAGE_SIZE;
 
         // Loop over all pages in the region (2 pages for 8KB regions)
         for (uint32_t page_num = 0; page_num < num_pages; ++page_num) {
-            uint64_t page_physical_addr = physical_addr + (page_num * CpuHexagonSMMUStressTestV2::PAGE_SIZE);
+            uint64_t page_physical_addr = physical_addr + (page_num * CpuArmCortexA53SMMUStressTestV2::PAGE_SIZE);
 
             SCP_INFO(()) << "  - Clearing page " << page_num << " at PA=0x" << std::hex << page_physical_addr;
 
@@ -1063,7 +996,7 @@ public:
             // Clear the end of this page
             for (uint32_t i = 0; i < words_to_clear; ++i) {
                 write_memory_64(
-                    page_physical_addr + CpuHexagonSMMUStressTestV2::PAGE_SIZE - (words_to_clear * 8) + (i * 8),
+                    page_physical_addr + CpuArmCortexA53SMMUStressTestV2::PAGE_SIZE - (words_to_clear * 8) + (i * 8),
                     0xBEEF0000 + i);
             }
         }
@@ -1142,9 +1075,8 @@ public:
                          << l3_readback;
 
             if (extracted_physical != page_pa) {
-                SCP_FATAL(()) << "🚨 CRITICAL: L3[" << page << "] physical address mismatch!"
-                              << "  Expected: 0x" << std::hex << page_pa << "  Found: 0x" << std::hex
-                              << extracted_physical;
+                SCP_FATAL(()) << "🚨 CRITICAL: L3[" << page << "] physical address mismatch!" << "  Expected: 0x"
+                              << std::hex << page_pa << "  Found: 0x" << std::hex << extracted_physical;
             } else {
                 SCP_INFO(()) << "    ✅ L3[" << page << "] verification successful";
             }
@@ -1196,31 +1128,6 @@ public:
         m_cpu_to_region[cpu] = 0xFFFFFFFF;
     }
 
-    void load_hexagon_firmware()
-    {
-        SCP_INFO(()) << "🔥 LOADING HEXAGON FIRMWARE from file: " << FIRMWARE_BIN_PATH;
-
-        // Read the firmware from the compiled binary file
-        std::ifstream firmware_file(FIRMWARE_BIN_PATH, std::ios::binary | std::ios::ate);
-        if (!firmware_file) {
-            SCP_FATAL(()) << "Failed to open firmware file: " << FIRMWARE_BIN_PATH;
-            return;
-        }
-
-        std::streamsize firmware_size = firmware_file.tellg();
-        firmware_file.seekg(0, std::ios::beg);
-
-        std::vector<uint8_t> firmware_data(firmware_size);
-        if (!firmware_file.read(reinterpret_cast<char*>(firmware_data.data()), firmware_size)) {
-            SCP_FATAL(()) << "Failed to read firmware file: " << FIRMWARE_BIN_PATH;
-            return;
-        }
-
-        SCP_INFO(()) << "🔥 LOADED " << firmware_size << " bytes of Hexagon firmware, calling set_firmware_from_binary";
-        set_firmware_from_binary(firmware_data.data(), firmware_size, BOOT_ADDR);
-        SCP_INFO(()) << "🔥 FIRMWARE SET COMPLETE";
-    }
-
     void write_smmu_register(uint32_t addr, uint32_t value)
     {
         SCP_INFO(()) << "ATTEMPTING SMMU WRITE: addr=0x" << std::hex << addr << ", value=0x" << value;
@@ -1266,7 +1173,7 @@ public:
         write_smmu_register(tlbiall_addr, 0x0); // Any write invalidates all entries for this CB
 
         // Add delay to ensure TLB invalidation takes effect
-        // wait(sc_core::sc_time(2, sc_core::SC_US));
+        wait(sc_core::sc_time(2, sc_core::SC_US));
 
         SCP_INFO(()) << "✅ TLB INVALIDATION COMPLETE: CPU " << cpu << " TLB cleared";
     }
@@ -1281,15 +1188,14 @@ public:
     virtual void end_of_simulation() override
     {
         SCP_WARN(()) << "SMMU Stress Test V2 completed"
-                     << "\nFinal statistics:"
-                     << "\n  - Total iterations: " << m_tester_controller.m_global_iterations << "/"
-                     << MAX_ITERATIONS / p_num_cpu << "\n  - CPUs: " << p_num_cpu.get_value()
+                     << "\nFinal statistics:" << "\n  - Total iterations: " << m_tester_controller.m_global_iterations
+                     << "/" << MAX_ITERATIONS << "\n  - CPUs: " << p_num_cpu.get_value()
                      << "\n  - Memory regions: " << m_num_regions << "\n  - Pattern size: " << PATTERN_SIZE
                      << " * 8 bytes";
     }
 };
 
-void CpuHexagonSMMUStressTestV2::reconfigure_context_bank(uint32_t cb, uint64_t page_table_addr)
+void CpuArmCortexA53SMMUStressTestV2::reconfigure_context_bank(uint32_t cb, uint64_t page_table_addr)
 {
     uint32_t cb_base = get_context_bank_base(cb);
 
@@ -1331,15 +1237,7 @@ void CpuHexagonSMMUStressTestV2::reconfigure_context_bank(uint32_t cb, uint64_t 
 void SMMUTesterController::configure_smmu_mapping(uint32_t cpu_id, uint32_t region_id)
 {
     if (m_parent) {
-        // Run map_cpu_to_region in a separate thread
-        std::thread mapping_thread([this, cpu_id, region_id]() {
-            CPUState& cpu = m_cpu_states[cpu_id];
-            m_parent->map_cpu_to_region(cpu_id, region_id);
-            cpu.status = READY;
-        });
-
-        // Detach the thread to allow it to run independently
-        mapping_thread.detach();
+        m_parent->map_cpu_to_region(cpu_id, region_id);
     }
 }
 
@@ -1358,18 +1256,19 @@ bool SMMUTesterController::verify_region_pattern(uint32_t cpu_id, uint32_t regio
         return false;
     }
 
-    uint64_t physical_addr = CpuHexagonSMMUStressTestV2::REGION_BASE +
-                             (region_id * CpuHexagonSMMUStressTestV2::REGION_SIZE);
+    uint64_t physical_addr = CpuArmCortexA53SMMUStressTestV2::REGION_BASE +
+                             (region_id * CpuArmCortexA53SMMUStressTestV2::REGION_SIZE);
 
     SCP_INFO(()) << "Verifying region " << region_id << " with ENHANCED 2-PAGE pattern at PA=0x" << std::hex
                  << physical_addr;
 
     const uint32_t words_to_check = 10; // Check 10 words (80 bytes) at each boundary
-    const uint32_t num_pages = CpuHexagonSMMUStressTestV2::REGION_SIZE / CpuHexagonSMMUStressTestV2::PAGE_SIZE;
+    const uint32_t num_pages = CpuArmCortexA53SMMUStressTestV2::REGION_SIZE /
+                               CpuArmCortexA53SMMUStressTestV2::PAGE_SIZE;
 
     // Loop over all pages in the region (2 pages for 8KB regions)
     for (uint32_t page_num = 0; page_num < num_pages; ++page_num) {
-        uint64_t page_physical_addr = physical_addr + (page_num * CpuHexagonSMMUStressTestV2::PAGE_SIZE);
+        uint64_t page_physical_addr = physical_addr + (page_num * CpuArmCortexA53SMMUStressTestV2::PAGE_SIZE);
 
         SCP_INFO(()) << "  - Verifying page " << page_num << " at PA=0x" << std::hex << page_physical_addr;
 
@@ -1397,8 +1296,8 @@ bool SMMUTesterController::verify_region_pattern(uint32_t cpu_id, uint32_t regio
 
         // Check the end of this page
         for (uint32_t word = 0; word < words_to_check; ++word) {
-            uint64_t word_addr = page_physical_addr + CpuHexagonSMMUStressTestV2::PAGE_SIZE - (words_to_check * 8) +
-                                 (word * 8);
+            uint64_t word_addr = page_physical_addr + CpuArmCortexA53SMMUStressTestV2::PAGE_SIZE -
+                                 (words_to_check * 8) + (word * 8);
             uint64_t read_value = m_parent->m_memory_accessor.read_memory(word_addr);
 
             uint32_t pattern_cpu = (read_value >> 32) & 0xFFFFFFFF;
@@ -1433,18 +1332,18 @@ void SMMUTesterController::clear_region_pattern(uint32_t region_id)
         return;
     }
 
-    uint64_t physical_addr = CpuHexagonSMMUStressTestV2::REGION_BASE +
-                             (region_id * CpuHexagonSMMUStressTestV2::REGION_SIZE);
+    uint64_t physical_addr = CpuArmCortexA53SMMUStressTestV2::REGION_BASE +
+                             (region_id * CpuArmCortexA53SMMUStressTestV2::REGION_SIZE);
 
     SCP_INFO(()) << "Clearing region " << region_id << " (2-PAGE) at physical address 0x" << std::hex << physical_addr;
 
-    const uint32_t words_to_clear = CpuHexagonSMMUStressTestV2::BOUNDARY_BYTES / 8;
-    const uint32_t num_pages = CpuHexagonSMMUStressTestV2::REGION_SIZE /
-                               CpuHexagonSMMUStressTestV2::PAGE_SIZE;
+    const uint32_t words_to_clear = CpuArmCortexA53SMMUStressTestV2::BOUNDARY_BYTES / 8;
+    const uint32_t num_pages = CpuArmCortexA53SMMUStressTestV2::REGION_SIZE /
+                               CpuArmCortexA53SMMUStressTestV2::PAGE_SIZE;
 
     // Loop over all pages in the region (2 pages for 8KB regions)
     for (uint32_t page_num = 0; page_num < num_pages; ++page_num) {
-        uint64_t page_physical_addr = physical_addr + (page_num * CpuHexagonSMMUStressTestV2::PAGE_SIZE);
+        uint64_t page_physical_addr = physical_addr + (page_num * CpuArmCortexA53SMMUStressTestV2::PAGE_SIZE);
 
         SCP_INFO(()) << "  - Clearing page " << page_num << " at PA=0x" << std::hex << page_physical_addr;
 
@@ -1456,7 +1355,7 @@ void SMMUTesterController::clear_region_pattern(uint32_t region_id)
         // Clear the end of this page
         for (uint32_t i = 0; i < words_to_clear; ++i) {
             m_parent->write_memory_64(
-                page_physical_addr + CpuHexagonSMMUStressTestV2::PAGE_SIZE - (words_to_clear * 8) + (i * 8),
+                page_physical_addr + CpuArmCortexA53SMMUStressTestV2::PAGE_SIZE - (words_to_clear * 8) + (i * 8),
                 0xBEEF0000 + i);
         }
     }
@@ -1464,7 +1363,7 @@ void SMMUTesterController::clear_region_pattern(uint32_t region_id)
     SCP_INFO(()) << "✅ Region " << region_id << " cleared (all " << num_pages << " pages)";
 }
 */
-/* ---- Implementation moved here to ensure CpuHexagonSMMUStressTestV2 is a complete type ---- */
+/* ---- Implementation moved here to ensure CpuArmCortexA53SMMUStressTestV2 is a complete type ---- */
 
 /**
  * @brief Handles a completion notification from a CPU.
@@ -1489,16 +1388,19 @@ void SMMUTesterController::handle_complete(uint32_t cpu_id, CompleteType complet
 
         SCP_INFO(()) << "CPU " << cpu_id << " completed filling region " << cpu.assigned_region;
 
-        // Use cpu_id from pathid (the CPU that's reporting completion) to verify the pattern
-        // The testbench knows which CPU was assigned to this region, so we verify against that CPU ID
-        if (verify_region_pattern(cpu_id, cpu.assigned_region)) {
-            SCP_INFO((TEST))("Region {:d} filled by CPU_{:d} verified successfully", cpu.assigned_region, cpu_id);
+        uint64_t physical_addr = CpuArmCortexA53SMMUStressTestV2::REGION_BASE +
+                                 (cpu.assigned_region * CpuArmCortexA53SMMUStressTestV2::REGION_SIZE);
+        uint64_t first_word = m_parent->m_memory_accessor.read_memory(physical_addr);
+        uint32_t original_filler_cpu = (first_word >> 32) & 0xFFFFFFFF;
+
+        if (verify_region_pattern(original_filler_cpu, cpu.assigned_region)) {
+            SCP_INFO((TEST))("Region {:d} (for CPU_{:d}) verified by tester", cpu.assigned_region, original_filler_cpu);
             // clear_region_pattern(cpu.assigned_region);
             m_available_regions.push(cpu.assigned_region);
             cpu.iteration_count++;
             m_global_iterations++;
         } else {
-            SCP_FATAL(()) << "Region " << cpu.assigned_region << " verification failed for CPU " << cpu_id;
+            SCP_FATAL(()) << "Region " << cpu.assigned_region << " verification failed";
             sc_core::sc_stop();
             return;
         }
@@ -1525,7 +1427,6 @@ void SMMUTesterController::handle_complete(uint32_t cpu_id, CompleteType complet
 
 int sc_main(int argc, char* argv[])
 {
-    std::srand(std::time({}));
     scp::init_logging(scp::LogConfig()
                           .fileInfoFrom(sc_core::SC_ERROR)
                           .logAsync(false)
@@ -1537,8 +1438,8 @@ int sc_main(int argc, char* argv[])
     auto broker_h = m_broker.create_broker_handle(orig);
     ArgParser ap{ broker_h, argc, argv };
 
-    SCP_INFO("sc_main") << "Start Hexagon SMMU Stress Test V2";
-    CpuHexagonSMMUStressTestV2 test_bench("test-bench");
+    SCP_INFO("sc_main") << "Start SMMU Stress Test V2 - Tester Controlled";
+    CpuArmCortexA53SMMUStressTestV2 test_bench("test-bench");
 
     if ((gs::cci_get<int>(broker_h, "test-bench.num_cpu") > 8) ||
         gs::cci_get_d<bool>(broker_h, "test-bench.inst_a.icount", false)) {

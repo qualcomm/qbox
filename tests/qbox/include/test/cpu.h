@@ -9,7 +9,11 @@
 #ifndef TESTS_INCLUDE_TEST_CPU_H
 #define TESTS_INCLUDE_TEST_CPU_H
 
-#include <keystone/keystone.h>
+#include <cstdint>
+#include <cstring>
+#include <fstream>
+#include <initializer_list>
+#include <vector>
 
 #include <systemc>
 #include <tlm_utils/tlm_quantumkeeper.h>
@@ -40,26 +44,6 @@ public:
     static constexpr uint64_t BULKMEM_ADDR = 0x100000000;
     static constexpr size_t BULKMEM_SIZE = 1024 * 1024 * 1024;
 
-private:
-    ks_arch qemu_to_ks_arch(qemu::Target arch)
-    {
-        switch (arch) {
-        case qemu::Target::AARCH64:
-            return KS_ARCH_ARM64;
-
-        case qemu::Target::HEXAGON:
-            return KS_ARCH_HEXAGON;
-
-        case qemu::Target::RISCV32:
-            // RISC-V 32-bit not supported by Keystone, but we can compile firmware manually
-            return KS_ARCH_MAX;
-
-        default:
-            SCP_FATAL(SCMOD) << "Unsupported QEMU architecture for Keystone";
-            return KS_ARCH_MAX; /* avoid compiler warning */
-        }
-    }
-
 protected:
     qemu::Target m_arch;
 
@@ -70,31 +54,51 @@ protected:
     gs::gs_memory<> m_mem;
     gs::gs_memory<> m_bulkmem;
 
-    void set_firmware(const char* assembly, uint64_t addr = 0)
+    /*
+     * Load a pre-assembled firmware .bin (built at CMake-configure time by
+     * llvm-mc + ld.lld + llvm-objcopy) into m_mem at load_addr.
+     *
+     * Each entry in the patches list overwrites a sizeof(T)-wide word at the
+     * tail of the binary — the Nth entry lands at (size - (N+1)*sizeof(T)).
+     * Firmware .S files declare matching placeholders at the end of their
+     * .data section: .quad for uint64_t (aarch64), .word for uint32_t
+     * (RISC-V / Hexagon).
+     */
+    template <class T = uint64_t>
+    void load_firmware_binary(const char* bin_path, uint64_t load_addr, std::initializer_list<T> patches = {})
     {
-        ks_engine* ks;
-        ks_err err;
-        size_t size, count;
-        uint8_t* fw;
-
-        err = ks_open(qemu_to_ks_arch(m_arch), KS_MODE_LITTLE_ENDIAN, &ks);
-
-        if (err != KS_ERR_OK) {
-            SCP_FATAL(SCMOD) << "Unable to initialize keystone";
+        std::vector<uint8_t> data = read_firmware_file(bin_path);
+        const size_t needed = patches.size() * sizeof(T);
+        if (data.size() < needed) {
+            SCP_FATAL(SCMOD) << "Firmware " << bin_path << " size " << data.size() << " < " << needed
+                             << " bytes needed for patches";
+            TEST_FAIL("Firmware too small for patch values");
         }
-
-        if (ks_asm(ks, assembly, addr, &fw, &size, &count) != KS_ERR_OK || size == 0) {
-            std::cerr << assembly << "\n";
-            std::cerr << "errno: " << ks_errno(ks) << "\n";
-            std::cerr << "error: " << ks_strerror(ks_errno(ks)) << "\n";
-            SCP_INFO() << assembly;
-            TEST_FAIL("Unable to assemble the test firmware\n");
+        size_t idx = 0;
+        for (T v : patches) {
+            size_t offset = data.size() - (patches.size() - idx) * sizeof(T);
+            std::memcpy(data.data() + offset, &v, sizeof(T));
+            ++idx;
         }
+        m_mem.load.ptr_load(data.data(), load_addr, data.size());
+    }
 
-        m_mem.load.ptr_load(fw, addr, size);
-
-        ks_free(fw);
-        ks_close(ks);
+private:
+    std::vector<uint8_t> read_firmware_file(const char* bin_path)
+    {
+        std::ifstream file(bin_path, std::ios::binary | std::ios::ate);
+        if (!file.is_open()) {
+            SCP_FATAL(SCMOD) << "Failed to open firmware file: " << bin_path;
+            TEST_FAIL("Failed to open firmware file");
+        }
+        std::streamsize size = file.tellg();
+        file.seekg(0, std::ios::beg);
+        std::vector<uint8_t> data(size);
+        if (!file.read(reinterpret_cast<char*>(data.data()), size)) {
+            SCP_FATAL(SCMOD) << "Failed to read firmware file: " << bin_path;
+            TEST_FAIL("Failed to read firmware file");
+        }
+        return data;
     }
 
 public:

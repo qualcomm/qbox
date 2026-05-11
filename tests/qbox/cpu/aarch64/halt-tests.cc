@@ -8,7 +8,8 @@
 
 #include <systemc>
 
-#include <cstdio>
+#include <chrono>
+#include <thread>
 #include <vector>
 
 #include "test/cpu.h"
@@ -35,33 +36,6 @@ class CpuArmCortexA53SimpleHalt : public CpuArmTestBench<cpu_arm_cortexA53, CpuT
 public:
     static constexpr int NUM_WRITES = 10;
 
-    static constexpr const char* FIRMWARE = R"(
-        _start:
-            ldr x1, =0x%08)" PRIx64 R"(
-
-            mrs x0, mpidr_el1
-
-            and x2, x0, #0xff
-            and x0, x0, #0xff00
-            lsr x0, x0, #5
-            orr  x0, x0, x2
-
-            lsl x0, x0, #3
-            add x1, x1, x0
-
-            mov x0, #0
-
-        loop:
-            str x0, [x1]
-            add x0, x0, #1
-            cmp x0, #%d
-            b.ne loop
-
-        end:
-            wfi
-            b end
-    )";
-
 protected:
     std::vector<int> m_writes;
     std::vector<bool> im_halted;
@@ -72,8 +46,6 @@ public:
     CpuArmCortexA53SimpleHalt(const sc_core::sc_module_name& n)
         : CpuArmTestBench<cpu_arm_cortexA53, CpuTesterMmio>(n), halt("halt", p_num_cpu)
     {
-        char buf[1024];
-
         map_halt_to_cpus(halt);
 
         im_halted.resize(p_num_cpu);
@@ -84,8 +56,9 @@ public:
             im_halted[i] = true;
         }
 
-        std::snprintf(buf, sizeof(buf), FIRMWARE, CpuTesterMmio::MMIO_ADDR, NUM_WRITES * 2);
-        set_firmware(buf);
+        load_firmware_binary(
+            FIRMWARE_BIN_PATH, MEM_ADDR,
+            { static_cast<uint64_t>(CpuTesterMmio::MMIO_ADDR), static_cast<uint64_t>(NUM_WRITES * 2) });
 
         m_writes.resize(p_num_cpu);
         for (int i = 0; i < p_num_cpu; i++) {
@@ -160,7 +133,5 @@ public:
         }
     }
 };
-
-constexpr const char* CpuArmCortexA53SimpleHalt::FIRMWARE;
 
 int sc_main(int argc, char* argv[]) { return run_testbench<CpuArmCortexA53SimpleHalt>(argc, argv); }

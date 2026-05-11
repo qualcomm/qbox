@@ -4,9 +4,14 @@
 #ifndef TEST_H
 #define TEST_H
 
+#include <cstdint>
+#include <cstring>
+#include <fstream>
+#include <initializer_list>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include <systemc>
 
@@ -14,7 +19,6 @@
 #include "cciutils.h"
 #include "cci/utils/broker.h"
 #include "gs_memory.h"
-#include "keystone/keystone.h"
 #include "scp/report.h"
 
 bool run_systemc()
@@ -37,28 +41,42 @@ bool run_systemc()
     return test_failed;
 }
 
-void load_firmware(gs::gs_memory<>& destination, const char* assembly, uint64_t addr = 0)
+/*
+ * Load a pre-assembled firmware .bin (built by llvm-mc + ld.lld +
+ * llvm-objcopy at CMake-configure time). Each entry in patch_words overwrites
+ * a 32-bit word at the tail of the binary — the Nth entry lands at
+ * (size - (N+1)*4). The firmware .S file declares matching .word placeholders
+ * at the end of its .data section.
+ */
+inline void load_firmware(gs::gs_memory<>& destination, const char* bin_path, uint64_t addr,
+                          std::initializer_list<uint32_t> patch_words = {})
 {
-    ks_engine* ks = nullptr;
-
-    ks_err err = ks_open(KS_ARCH_HEXAGON, KS_MODE_LITTLE_ENDIAN, &ks);
-    if (KS_ERR_OK != err) {
-        SCP_FATAL() << "Unable to initialize keystone";
+    std::ifstream file(bin_path, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        SCP_FATAL() << "Failed to open firmware file: " << bin_path;
     }
 
-    size_t count = 0;
-    uint8_t* fw = nullptr;
-    size_t size = 0;
+    std::streamsize size = file.tellg();
+    file.seekg(0, std::ios::beg);
 
-    if (ks_asm(ks, assembly, addr, &fw, &size, &count)) {
-        SCP_FATAL() << "Unable to assemble the test firmware: " << ks_strerror(ks_errno(ks)) << " (" << ks_errno(ks)
-                    << ")";
+    std::vector<uint8_t> data(size);
+    if (!file.read(reinterpret_cast<char*>(data.data()), size)) {
+        SCP_FATAL() << "Failed to read firmware file: " << bin_path;
     }
 
-    destination.load.ptr_load(fw, addr, size);
+    const size_t needed = patch_words.size() * sizeof(uint32_t);
+    if (data.size() < needed) {
+        SCP_FATAL() << "Firmware " << bin_path << " size " << data.size() << " < " << needed
+                    << " bytes needed for patches";
+    }
+    size_t idx = 0;
+    for (uint32_t v : patch_words) {
+        size_t offset = data.size() - (patch_words.size() - idx) * sizeof(uint32_t);
+        std::memcpy(data.data() + offset, &v, sizeof(uint32_t));
+        ++idx;
+    }
 
-    ks_free(fw);
-    ks_close(ks);
+    destination.load.ptr_load(data.data(), addr, data.size());
 }
 
 template <typename T>

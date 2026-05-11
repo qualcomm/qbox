@@ -1,6 +1,6 @@
 /*
  * Hexagon SMMU Stress Test Firmware
- * Translated from ARM64 version in smmu_router_stress_test_v2.cc
+ * Translated from ARM64 version in smmu-router-stress-test-v2.cc
  *
  * This firmware runs on Hexagon CPUs behind SMMU TBUs, testing address
  * translation and multi-CPU memory access patterns using DMA operations.

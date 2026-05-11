@@ -4,8 +4,8 @@ This directory contains the Hexagon version of the SMMU router stress test v2.
 
 ## Files
 
-- `hexagon_smmu_firmware.s` - Hexagon assembly firmware (translated from ARM64)
-- `hexagon_smmu_stress_test_v2.cc` - C++ test bench
+- `hexagon-smmu-stress-test-v2.s` - Hexagon assembly firmware (translated from ARM64)
+- `hexagon-smmu-stress-test-v2.cc` - C++ test bench
 - `HEXAGON_SMMU_README.md` - This file
 
 ## Hexagon MMU Configuration
@@ -76,34 +76,34 @@ You need the Hexagon SDK installed with the following tools:
 
 ```bash
 # Assemble the .s file to object file
-hexagon-clang -march=hexagon -c hexagon_smmu_firmware.s -o hexagon_smmu_firmware.o
+hexagon-clang -march=hexagon -c hexagon-smmu-stress-test-v2.s -o hexagon-smmu-stress-test-v2.o
 
 # Or use the assembler directly:
-hexagon-as -march=hexagon hexagon_smmu_firmware.s -o hexagon_smmu_firmware.o
+hexagon-as -march=hexagon hexagon-smmu-stress-test-v2.s -o hexagon-smmu-stress-test-v2.o
 ```
 
 ### Step 2: Extract Binary
 
 ```bash
 # Convert object file to raw binary
-hexagon-objcopy -O binary hexagon_smmu_firmware.o hexagon_smmu_firmware.bin
+hexagon-objcopy -O binary hexagon-smmu-stress-test-v2.o hexagon-smmu-stress-test-v2.bin
 ```
 
 ### Step 3: Generate C Array (Optional)
 
 ```bash
 # Generate hex dump for embedding in C++
-hexdump -v -e '16/1 "0x%02x, " "\n"' hexagon_smmu_firmware.bin > hexagon_smmu_firmware.hex
+hexdump -v -e '16/1 "0x%02x, " "\n"' hexagon-smmu-stress-test-v2.bin > hexagon-smmu-stress-test-v2.hex
 ```
 
 ### Step 4: Verify (Optional)
 
 ```bash
 # Disassemble to verify instructions
-hexagon-objdump -d hexagon_smmu_firmware.o > hexagon_smmu_firmware.dis
+hexagon-objdump -d hexagon-smmu-stress-test-v2.o > hexagon-smmu-stress-test-v2.dis
 
 # Check the disassembly to ensure instructions are correct
-cat hexagon_smmu_firmware.dis
+cat hexagon-smmu-stress-test-v2.dis
 ```
 
 ## Integration with C++ Test
@@ -112,7 +112,7 @@ cat hexagon_smmu_firmware.dis
 
 ```cpp
 // In your test bench constructor
-std::ifstream firmware_file("hexagon_smmu_firmware.bin", std::ios::binary);
+std::ifstream firmware_file("hexagon-smmu-stress-test-v2.bin", std::ios::binary);
 std::vector<uint8_t> firmware_data(
     (std::istreambuf_iterator<char>(firmware_file)),
     std::istreambuf_iterator<char>()
@@ -125,7 +125,7 @@ m_mem.load.ptr_load(firmware_data.data(), MEM_ADDR, firmware_data.size());
 ```cpp
 // Include the generated hex file
 static const uint8_t HEXAGON_FIRMWARE[] = {
-    #include "hexagon_smmu_firmware.hex"
+    #include "hexagon-smmu-stress-test-v2.hex"
 };
 
 // Load into memory
@@ -136,7 +136,7 @@ m_mem.load.ptr_load(HEXAGON_FIRMWARE, MEM_ADDR, sizeof(HEXAGON_FIRMWARE));
 
 ```cpp
 // Extract individual sections from object file
-hexagon-objcopy -O binary --only-section=.text hexagon_smmu_firmware.o boot.bin
+hexagon-objcopy -O binary --only-section=.text hexagon-smmu-stress-test-v2.o boot.bin
 
 // Load each section at its specific address
 m_mem.load.ptr_load(boot_data, BOOT_ADDR, boot_size);

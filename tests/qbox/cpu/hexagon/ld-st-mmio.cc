@@ -4,10 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later
  */
 
-#include <cstdio>
-#include <vector>
-#include <deque>
-
 #include "test/cpu.h"
 #include "test/tester/mmio.h"
 
@@ -23,25 +19,6 @@ class CpuHexagonLdStTest : public CpuTestBench<qemu_cpu_hexagon, CpuTesterMmio>
     bool passed = false;
     hexagon_globalreg hex_gregs;
 
-    static constexpr const char* FIRMWARE = R"(
-_start:
-    r0 = #0x%08)" PRIx32 R"(
-
-    //load and discard the result from CpuTesterMmio::MMIO_ADDR:
-    r2 = memw(r0)
-
-    //store a known value to CpuTesterMmio::MMIO_ADDR:
-    r3 = #0x0f0f0f0f
-    memw(r0) = r3
-end:
-    // This instruction is not supported by keystone:
-    //   wait(r0)
-    // So we'll just bypass it and use the word we got from a reference
-    //   assembler:
-    .word 0x6440c000
-    jump end
-    )";
-
 protected:
     gs::async_event m_aev;
 
@@ -56,10 +33,9 @@ public:
         }
         hex_gregs.p_hexagon_start_addr = MEM_ADDR;
 
-        char buf[1024];
         m_aev.async_attach_suspending();
-        std::snprintf(buf, sizeof(buf), FIRMWARE, static_cast<uint32_t>(CpuTesterMmio::MMIO_ADDR));
-        set_firmware(buf, MEM_ADDR);
+        load_firmware_binary(FIRMWARE_BIN_PATH, MEM_ADDR,
+                             std::initializer_list<uint32_t>{ static_cast<uint32_t>(CpuTesterMmio::MMIO_ADDR) });
     }
 
     virtual ~CpuHexagonLdStTest() {}

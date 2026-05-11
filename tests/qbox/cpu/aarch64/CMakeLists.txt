@@ -1,59 +1,21 @@
-qbox_add_cpu_test(aarch64-simple-write-test 100 simple-write-test.cc)
-qbox_add_cpu_test(aarch64-dmi-test 100 dmi-test.cc)
-qbox_add_cpu_test(aarch64-dmi-test-concurrent-inval 100 dmi-test-concurrent-inval.cc)
-# Build assembly firmware for DMI reset test
-find_program(LLVM_MC llvm-mc HINTS /opt/homebrew/opt/llvm/bin)
-find_program(LLD ld.lld)
-find_program(LLVM_OBJCOPY llvm-objcopy HINTS /opt/homebrew/opt/llvm/bin)
+# All AArch64 CPU tests assemble their firmware with llvm-mc + ld.lld and load
+# the resulting .bin at runtime (see load_firmware_binary in test/cpu.h).
 
-# "and APPLE" workaround: QQVPQSP-714
-if(LLVM_MC AND LLD AND LLVM_OBJCOPY AND APPLE)
-    # Assemble the ARM64 assembly file
-    add_custom_command(
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/dmi-test-reset.o
-        COMMAND ${LLVM_MC} -arch=aarch64 -filetype=obj -triple=aarch64-none-elf
-                ${CMAKE_CURRENT_SOURCE_DIR}/dmi-test-reset.S
-                -o ${CMAKE_CURRENT_BINARY_DIR}/dmi-test-reset.o
-        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/dmi-test-reset.S
-        COMMENT "Assembling dmi-test-reset.S"
-    )
+# Thin wrapper that pins ARCH=aarch64. Firmware base name is derived from
+# the first source file's stem, so call sites only state target, timeout,
+# and sources.
+function(qbox_add_cpu_aarch64_test target timeout)
+    qbox_add_cpu_test(${target} ${timeout} ${ARGN} ARCH aarch64)
+endfunction()
 
-    # Link the object file
-    add_custom_command(
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/dmi-test-reset.elf
-        COMMAND ${LLD} -T ${CMAKE_CURRENT_SOURCE_DIR}/dmi-test-reset.ld
-                ${CMAKE_CURRENT_BINARY_DIR}/dmi-test-reset.o
-                -o ${CMAKE_CURRENT_BINARY_DIR}/dmi-test-reset.elf
-        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/dmi-test-reset.o
-                ${CMAKE_CURRENT_SOURCE_DIR}/dmi-test-reset.ld
-        COMMENT "Linking dmi-test-reset.elf"
-    )
-
-    # Create binary file
-    add_custom_command(
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/dmi-test-reset.bin
-        COMMAND ${LLVM_OBJCOPY} -O binary
-                ${CMAKE_CURRENT_BINARY_DIR}/dmi-test-reset.elf
-                ${CMAKE_CURRENT_BINARY_DIR}/dmi-test-reset.bin
-        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/dmi-test-reset.elf
-        COMMENT "Creating dmi-test-reset.bin"
-    )
-
-    # Create a custom target for the firmware
-    add_custom_target(dmi-test-reset-firmware
-        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/dmi-test-reset.bin)
-
-    qbox_add_cpu_test(aarch64-dmi-test-reset 100 dmi-test-reset.cc)
-    add_dependencies(aarch64-dmi-test-reset dmi-test-reset-firmware)
-    target_compile_definitions(aarch64-dmi-test-reset PRIVATE
-        FIRMWARE_BIN_PATH="${CMAKE_CURRENT_BINARY_DIR}/dmi-test-reset.bin")
-else()
-    message(WARNING "LLVM tools not found - skipping aarch64-dmi-test-reset")
-endif()
-qbox_add_cpu_test(aarch64-ld-st-excl-fail-test 100 ld-st-excl-fail.cc)
-qbox_add_cpu_test(aarch64-write_read 100 write_read.cc)
-qbox_add_cpu_test(aarch64-dmi-test-async-inval 100 dmi-test-async-inval.cc)
-qbox_add_cpu_test(halt-tests 100 halt-tests.cc)
-qbox_add_cpu_test(reset-test-system 100 reset-test-system.cc)
-qbox_add_cpu_test(reset-test-cpu 100 reset-test-cpu.cc)
-qbox_add_cpu_test(aarch64-smmu-router-stress-test-v2 100 smmu_router_stress_test_v2.cc)
+qbox_add_cpu_aarch64_test(aarch64-simple-write-test          100 simple-write-test.cc)
+qbox_add_cpu_aarch64_test(aarch64-dmi-test                   100 dmi-test.cc)
+qbox_add_cpu_aarch64_test(aarch64-dmi-test-concurrent-inval  100 dmi-test-concurrent-inval.cc)
+qbox_add_cpu_aarch64_test(aarch64-dmi-test-reset             100 dmi-test-reset.cc)
+qbox_add_cpu_aarch64_test(aarch64-ld-st-excl-fail-test       100 ld-st-excl-fail.cc)
+qbox_add_cpu_aarch64_test(aarch64-write-read                 100 write-read.cc)
+qbox_add_cpu_aarch64_test(aarch64-dmi-test-async-inval       100 dmi-test-async-inval.cc)
+qbox_add_cpu_aarch64_test(halt-tests                         100 halt-tests.cc)
+qbox_add_cpu_aarch64_test(reset-test-system                  100 reset-test-system.cc)
+qbox_add_cpu_aarch64_test(reset-test-cpu                     100 reset-test-cpu.cc)
+qbox_add_cpu_aarch64_test(aarch64-smmu-router-stress-test-v2 100 smmu-router-stress-test-v2.cc)

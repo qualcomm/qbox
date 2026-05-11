@@ -109,7 +109,7 @@ TEST_BENCH(TestUart, IbexStdioBackend)
 
     for (std::string::iterator itr = str.begin(); itr != str.end(); ++itr) {
         m_initiator_1.do_write(ibex_uart::REG_WDATA, *itr); // data
-        sc_core::wait(1, sc_core::SC_NS);                  // wait for txn transication
+        sc_core::wait(1, sc_core::SC_NS);                   // wait for txn transication
     }
 
     fflush(stdout);

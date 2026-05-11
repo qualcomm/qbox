@@ -1,83 +1,51 @@
-qbox_add_cpu_test(hexagon-ld-st-mmio-test 100 ld-st-mmio.cc)
-qbox_add_cpu_test(hexagon-reset-test 100 hex-reset.cc)
+# Hexagon firmwares: assembled with llvm-mc -arch=hexagon, linked with ld.lld,
+# objcopied to a raw .bin that the test loads via load_firmware_binary.
 
+# Thin wrapper that pins ARCH=hexagon. Firmware base name is derived from
+# the first source file's stem, so call sites only state target, timeout,
+# and sources.
+function(qbox_add_cpu_hexagon_test target timeout)
+    qbox_add_cpu_test(${target} ${timeout} ${ARGN} ARCH hexagon)
+endfunction()
+
+qbox_add_cpu_hexagon_test(hexagon-ld-st-mmio-test 100 ld-st-mmio.cc)
+qbox_add_cpu_hexagon_test(hexagon-reset-test      100 hexagon-reset.cc)
+
+# load-store-test has a bespoke executable (not a qbox_add_cpu_test caller),
+# so its firmware is built explicitly here.
 set(HEXAGON_STANDALONE_TEST_NAME "load-store-test")
+
+qbox_build_firmware_bin(${HEXAGON_STANDALONE_TEST_NAME} hexagon ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(
     ${HEXAGON_STANDALONE_TEST_NAME}
     ${HEXAGON_STANDALONE_TEST_NAME}.cc
 )
 
-target_include_directories(
-    ${HEXAGON_STANDALONE_TEST_NAME}
-    PRIVATE
-    ${keystone_SOURCE_DIR}/include
-)
-
 target_link_libraries(
     ${HEXAGON_STANDALONE_TEST_NAME}
     PRIVATE
     ${TARGET_LIBS}
-    keystone
     gs_memory
     router
     qemu_cpu_hexagon
     hexagon_globalreg
 )
 
+add_dependencies(${HEXAGON_STANDALONE_TEST_NAME} ${HEXAGON_STANDALONE_TEST_NAME}-firmware)
+target_compile_definitions(${HEXAGON_STANDALONE_TEST_NAME} PRIVATE
+    FIRMWARE_BIN_PATH="${CMAKE_CURRENT_BINARY_DIR}/${HEXAGON_STANDALONE_TEST_NAME}.bin")
+
 add_test(NAME hexagon-${HEXAGON_STANDALONE_TEST_NAME} COMMAND ${HEXAGON_STANDALONE_TEST_NAME})
 
-# Build assembly firmware for Hexagon SMMU stress test
-find_program(LLVM_MC llvm-mc)
-find_program(LLD ld.lld)
-find_program(LLVM_OBJCOPY llvm-objcopy)
-
-# Check if LLVM tools are available for building Hexagon firmware
-if(LLVM_MC AND LLD AND LLVM_OBJCOPY AND APPLE)
-    # Assemble the Hexagon assembly file
-    add_custom_command(
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/hexagon_smmu_firmware.o
-        COMMAND ${LLVM_MC} -arch=hexagon -filetype=obj
-                ${CMAKE_CURRENT_SOURCE_DIR}/hexagon_smmu_firmware.s
-                -o ${CMAKE_CURRENT_BINARY_DIR}/hexagon_smmu_firmware.o
-        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/hexagon_smmu_firmware.s
-        COMMENT "Assembling hexagon_smmu_firmware.s"
-    )
-
-    # Link the object file (with optional symbol overrides)
-    # Note: You can override constants by adding --defsym options like:
-    # --defsym TESTER_ADDR=0x50000 --defsym PAGE_SIZE=0x2000
-    add_custom_command(
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/hexagon_smmu_firmware.elf
-        COMMAND ${LLD} -T ${CMAKE_CURRENT_SOURCE_DIR}/hexagon_smmu_firmware.ld
-                ${CMAKE_CURRENT_BINARY_DIR}/hexagon_smmu_firmware.o
-                -o ${CMAKE_CURRENT_BINARY_DIR}/hexagon_smmu_firmware.elf
-                --defsym TESTER_ADDR=0x40000
-                --defsym REG_DEBUG=0x28
-                --defsym PAGE_SIZE=0x1000
-        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/hexagon_smmu_firmware.o
-                ${CMAKE_CURRENT_SOURCE_DIR}/hexagon_smmu_firmware.ld
-        COMMENT "Linking hexagon_smmu_firmware.elf (demonstrating --defsym capability)"
-    )
-
-    # Create binary file
-    add_custom_command(
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/hexagon_smmu_firmware.bin
-        COMMAND ${LLVM_OBJCOPY} -O binary
-                ${CMAKE_CURRENT_BINARY_DIR}/hexagon_smmu_firmware.elf
-                ${CMAKE_CURRENT_BINARY_DIR}/hexagon_smmu_firmware.bin
-        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/hexagon_smmu_firmware.elf
-        COMMENT "Creating hexagon_smmu_firmware.bin"
-    )
-
-    # Create a custom target for the firmware
-    add_custom_target(hexagon-smmu-firmware
-        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/hexagon_smmu_firmware.bin)
-
-    qbox_add_cpu_test(hexagon-smmu-stress-test-v2 100 hexagon_smmu_stress_test_v2.cc)
-    add_dependencies(hexagon-smmu-stress-test-v2 hexagon-smmu-firmware)
-    target_compile_definitions(hexagon-smmu-stress-test-v2 PRIVATE
-        FIRMWARE_BIN_PATH="${CMAKE_CURRENT_BINARY_DIR}/hexagon_smmu_firmware.bin")
+# hexagon-smmu-stress-test-v2.s uses V73 ops (tlbw, dmwait, dmlink) that older
+# Hexagon LLVM backends (e.g. Ubuntu's stock llvm-18) don't recognise. See
+# QQVPQSP-714. Only build it on platforms where a recent-enough Hexagon
+# backend ships: macOS via Homebrew's `llvm`, and Windows via MSYS2's
+# bundled LLVM.
+if(APPLE OR WIN32)
+    qbox_add_cpu_hexagon_test(hexagon-smmu-stress-test-v2 100 hexagon-smmu-stress-test-v2.cc
+        EXTRA_LD_ARGS --defsym TESTER_ADDR=0x40000 --defsym REG_DEBUG=0x28 --defsym PAGE_SIZE=0x1000)
 else()
-    message(WARNING "LLVM tools not found - skipping hexagon-smmu-stress-test-v2")
+    message(STATUS "Skipping hexagon-smmu-stress-test-v2: requires recent Hexagon LLVM backend (QQVPQSP-714)")
 endif()

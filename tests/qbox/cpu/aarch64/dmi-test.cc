@@ -8,7 +8,6 @@
 
 #include <systemc>
 
-#include <cstdio>
 #include <vector>
 #include <deque>
 
@@ -35,47 +34,6 @@ class CpuArmCortexA53DmiTest : public CpuArmTestBench<cpu_arm_cortexA53, CpuTest
 {
 public:
     static constexpr int NUM_WRITES = 512;
-
-    static constexpr const char* FIRMWARE = R"(
-        _start:
-            ldr x2, =0x%08)" PRIx64 R"(
-            ldr x1, =0x%08)" PRIx64 R"(
-
-            mrs x0, mpidr_el1
-
-            and x3, x0, #0xff
-            and x0, x0, #0xff00
-            lsr x0, x0, #5
-            orr  x0, x0, x3
-
-            lsl x0, x0, #3
-            add x1, x1, x0
-            add x2, x2, x0
-
-            # Init: will ask for a DMI pointer and go from ST_START to ST_READ_DMI
-            ldr x0, [x1]
-            str x0, [x2]
-
-        loop:
-            # Read on DMI socket, report the read on the control socket
-            ldr x0, [x1]
-            str x0, [x2]
-
-            add x0, x0, #1
-
-            # Write on DMI socket, report the write on the control socket
-            str x0, [x1]
-            str x0, [x2]
-
-            cmp x0, #%d
-            b.ne loop
-
-        end:
-            ldr x5, =0x80000000
-            str x5, [x2]
-            wfi
-            b end
-    )";
 
 protected:
     enum State {
@@ -111,12 +69,13 @@ public:
     CpuArmCortexA53DmiTest(const sc_core::sc_module_name& n)
         : CpuArmTestBench<cpu_arm_cortexA53, CpuTesterDmi>(n), m_aevs(p_num_cpu)
     {
-        char buf[1024];
         SCP_DEBUG(SCMOD) << "CpuArmCortexA53DmiTest constructor";
         m_num_write_per_cpu = NUM_WRITES / p_num_cpu;
 
-        std::snprintf(buf, sizeof(buf), FIRMWARE, CpuTesterDmi::MMIO_ADDR, CpuTesterDmi::DMI_ADDR, m_num_write_per_cpu);
-        set_firmware(buf);
+        load_firmware_binary(
+            FIRMWARE_BIN_PATH, MEM_ADDR,
+            { static_cast<uint64_t>(CpuTesterDmi::MMIO_ADDR), static_cast<uint64_t>(CpuTesterDmi::DMI_ADDR),
+              static_cast<uint64_t>(m_num_write_per_cpu) });
 
         m_last_access_io.resize(p_num_cpu);
         std::fill(m_last_access_io.begin(), m_last_access_io.end(), false);
@@ -248,7 +207,5 @@ public:
         }
     }
 };
-
-constexpr const char* CpuArmCortexA53DmiTest::FIRMWARE;
 
 int sc_main(int argc, char* argv[]) { return run_testbench<CpuArmCortexA53DmiTest>(argc, argv); }

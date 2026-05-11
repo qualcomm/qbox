@@ -8,10 +8,6 @@
 
 #include <systemc>
 
-#include <cstdio>
-#include <vector>
-#include <deque>
-
 #include "test/cpu.h"
 #include "test/tester/exclusive.h"
 
@@ -29,36 +25,10 @@ class CpuArmCortexA53LdStExclTest : public CpuArmTestBench<cpu_arm_cortexA53, Cp
     bool passed = true;
 
 public:
-    static constexpr const char* FIRMWARE = R"(
-        _start:
-            ldr x1, =0x%08)" PRIx64 R"(
-
-        loop:
-            ldxr x0, [x1]
-            stxr w2, x0, [x1]
-
-            # Make sure the exclusive store failed
-            cmp w2, #0
-            beq fail
-
-        end:
-            wfi
-            b end
-
-        fail:
-            str x0, [x1]
-            b end
-    )";
-
-public:
-
     CpuArmCortexA53LdStExclTest(const sc_core::sc_module_name& n)
         : CpuArmTestBench<cpu_arm_cortexA53, CpuTesterExclusive>(n)
     {
-        char buf[2048];
-
-        std::snprintf(buf, sizeof(buf), FIRMWARE, CpuTesterExclusive::MMIO_ADDR);
-        set_firmware(buf);
+        load_firmware_binary(FIRMWARE_BIN_PATH, MEM_ADDR, { static_cast<uint64_t>(CpuTesterExclusive::MMIO_ADDR) });
     }
 
     virtual ~CpuArmCortexA53LdStExclTest() {}
@@ -81,7 +51,5 @@ public:
         CpuArmTestBench<cpu_arm_cortexA53, CpuTesterExclusive>::end_of_simulation();
     }
 };
-
-constexpr const char* CpuArmCortexA53LdStExclTest::FIRMWARE;
 
 int sc_main(int argc, char* argv[]) { return run_testbench<CpuArmCortexA53LdStExclTest>(argc, argv); }

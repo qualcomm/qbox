@@ -8,7 +8,6 @@
 
 #include <systemc>
 
-#include <cstdio>
 #include <vector>
 
 #include <cci/utils/broker.h>
@@ -36,33 +35,6 @@ class CpuArmCortexA53SimpleWriteTest : public CpuArmTestBench<cpu_arm_cortexA53,
 public:
     static constexpr int NUM_WRITES = 10;
 
-    static constexpr const char* FIRMWARE = R"(
-        _start:
-            ldr x1, =0x%08)" PRIx64 R"(
-
-            mrs x0, mpidr_el1
-
-            and x2, x0, #0xff
-            and x0, x0, #0xff00
-            lsr x0, x0, #5
-            orr  x0, x0, x2
-
-            lsl x0, x0, #3
-            add x1, x1, x0
-
-            mov x0, #0
-
-        loop:
-            str x0, [x1]
-            add x0, x0, #1
-            cmp x0, #%d
-            b.ne loop
-
-        end:
-            wfi
-            b end
-    )";
-
 protected:
     std::vector<int> m_writes;
     gs::async_event m_aev;
@@ -71,10 +43,9 @@ public:
     CpuArmCortexA53SimpleWriteTest(const sc_core::sc_module_name& n)
         : CpuArmTestBench<cpu_arm_cortexA53, CpuTesterMmio>(n), m_aev("aev")
     {
-        char buf[1024];
         m_aev.async_attach_suspending();
-        std::snprintf(buf, sizeof(buf), FIRMWARE, CpuTesterMmio::MMIO_ADDR, NUM_WRITES);
-        set_firmware(buf);
+        load_firmware_binary(FIRMWARE_BIN_PATH, MEM_ADDR,
+                             { static_cast<uint64_t>(CpuTesterMmio::MMIO_ADDR), static_cast<uint64_t>(NUM_WRITES) });
 
         m_writes.resize(p_num_cpu);
         for (int i = 0; i < p_num_cpu; i++) {
@@ -110,7 +81,5 @@ public:
         }
     }
 };
-
-constexpr const char* CpuArmCortexA53SimpleWriteTest::FIRMWARE;
 
 int sc_main(int argc, char* argv[]) { return run_testbench<CpuArmCortexA53SimpleWriteTest>(argc, argv); }
