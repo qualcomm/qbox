@@ -51,7 +51,7 @@ set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 
 # Dependencies URLs
-set(LIBQEMU_GIT "https://github.com/quic/qemu.git" CACHE STRING "libqemu  git url")
+set(LIBQEMU_GIT "https://github.com/qualcomm/qemu.git" CACHE STRING "libqemu  git url")
 set(SYSTEMC_GIT "https://github.com/accellera-official/systemc.git" CACHE STRING "SystemC git url")
 set(CCI_GIT "https://github.com/accellera-official/cci.git" CACHE STRING "SystemC Configuration, Control and Inspection (CCI) Library git url")
 set(SCP_GIT "https://github.com/accellera-official/systemc-common-practices.git" CACHE STRING "SystemC Common Practices (SCP) git url")
