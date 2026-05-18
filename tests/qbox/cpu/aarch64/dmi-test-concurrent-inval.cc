@@ -94,9 +94,9 @@ public:
             b.lt loop
 
         end:
-            wfi
             ldr x5, =0x80000000
             str x5, [x2]
+            wfi
             b end
 
         fail:
@@ -117,9 +117,12 @@ private:
     std::vector<bool> invalidated;
     std::mutex mutex;
 
+protected:
+    std::vector<gs::async_event> m_aevs;
+
 public:
     CpuArmCortexA53DmiConcurrentInvalTest(const sc_core::sc_module_name& n)
-        : CpuArmTestBench<cpu_arm_cortexA53, CpuTesterDmi>(n), invalidated(p_num_cpu, false)
+        : CpuArmTestBench<cpu_arm_cortexA53, CpuTesterDmi>(n), invalidated(p_num_cpu, false), m_aevs(p_num_cpu)
     {
         char buf[2048];
         SCP_DEBUG(SCMOD) << "CpuArmCortexA53DmiConcurrentInvalTest constructor";
@@ -153,7 +156,7 @@ public:
 
         // for CPU to shut down (accelerators may not WFI idle, and if they wake up, they may keep each other awake)
         if (data == 0x80000000 && cpuid < p_num_cpu) {
-            m_cpus[cpuid].halt_cb(true);
+            m_aevs[cpuid].async_detach_suspending();
             return;
         }
         TEST_ASSERT(data != -1); // -1 indicated a fail from the ASM

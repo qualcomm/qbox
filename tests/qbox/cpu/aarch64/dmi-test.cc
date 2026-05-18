@@ -71,9 +71,9 @@ public:
             b.ne loop
 
         end:
-            wfi
             ldr x5, =0x80000000
             str x5, [x2]
+            wfi
             b end
     )";
 
@@ -85,7 +85,7 @@ protected:
         ST_READ_IO,
         ST_WRITE_IO,
     };
-
+    std::vector<gs::async_event> m_aevs;
     /*
      * Decrease the number of write per CPU when the number of CPUs increases
      * so that the test does not last forever.
@@ -108,7 +108,8 @@ protected:
     void disable_dmi(int cpuid) { m_dmi_enabled[cpuid] = false; }
 
 public:
-    CpuArmCortexA53DmiTest(const sc_core::sc_module_name& n): CpuArmTestBench<cpu_arm_cortexA53, CpuTesterDmi>(n)
+    CpuArmCortexA53DmiTest(const sc_core::sc_module_name& n)
+        : CpuArmTestBench<cpu_arm_cortexA53, CpuTesterDmi>(n), m_aevs(p_num_cpu)
     {
         char buf[1024];
         SCP_DEBUG(SCMOD) << "CpuArmCortexA53DmiTest constructor";
@@ -141,7 +142,7 @@ public:
 
         // for CPU to shut down (accelerators may not WFI idle, and if they wake up, they may keep each other awake)
         if (data == 0x80000000 && cpuid < p_num_cpu && m_tester.get_buf_value(cpuid) == m_num_write_per_cpu) {
-            m_cpus[cpuid].halt_cb(true);
+            m_aevs[cpuid].async_detach_suspending();
             return;
         }
 
