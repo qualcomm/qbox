@@ -24,6 +24,7 @@ protected:
     cci::cci_param<unsigned int> p_nr_frames;
     cci::cci_param<unsigned int> p_nr_views;
     cci::cci_param<unsigned int> p_cnttid;
+    cci::cci_param<unsigned int> p_frame_stride;
 
 public:
     QemuTargetSocket<> socket;
@@ -49,6 +50,7 @@ public:
         , p_nr_frames("nr_frames", 2, "Number of frames")
         , p_nr_views("nr_views", 1, "Number of views")
         , p_cnttid("cnttid", 0x11, "Value of cnttid")
+        , p_frame_stride("frame_stride", 0x1000, "Frame stride in bytes")
         , socket("mem", inst)
         , view_socket("mem_view", inst)
         , irq("irq", p_nr_frames.get_value(), [](const char* n, size_t i) { return new QemuInitiatorSignalSocket(n); })
@@ -62,6 +64,7 @@ public:
         m_dev.set_prop_int("nr_frames", p_nr_frames);
         m_dev.set_prop_int("nr_views", p_nr_views);
         m_dev.set_prop_int("cnttid_0", p_cnttid);
+        m_dev.set_prop_int("frame_stride", p_frame_stride);
     }
 
     void end_of_elaboration() override
