@@ -53,7 +53,7 @@ macro(install_systemc_dependencies)
         GIT_REPOSITORY ${CCI_GIT}
         # If GIT_SHALLOW is enabled then GIT_TAG works only with branch names
         # and tags. A commit hash is not allowed.
-        GIT_TAG 915c189f6916ab56db773b2da20ebc06fe8f24e9
+        GIT_TAG aff681775057a9a332983b240f27bb4e6aae3887
         GIT_SHALLOW OFF
         OPTIONS "SYSTEMCCCI_BUILD_TESTS OFF"
     )
