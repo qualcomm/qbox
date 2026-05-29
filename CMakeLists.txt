@@ -307,6 +307,7 @@ if (NOT WITHOUT_QEMU)
             qemu-components/common/src/libqemu-cxx/gpex.cc
             qemu-components/common/src/libqemu-cxx/gpio.cc
             qemu-components/common/src/libqemu-cxx/libqemu-cxx.cc
+            qemu-components/common/src/libqemu-cxx/libqemu-plugin.cc
             qemu-components/common/src/libqemu-cxx/memory.cc
             qemu-components/common/src/libqemu-cxx/object.cc
             qemu-components/common/src/libqemu-cxx/rcu-read-lock.cc
