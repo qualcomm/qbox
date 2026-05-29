@@ -21,6 +21,11 @@
 #include <libqemu-cxx/exceptions.h>
 #include <dynlib_loader.h>
 
+/* Brings in the generated LibQemuExports struct and all plugin types
+ * (qemu_plugin_id_t, qemu_plugin_tb, qemu_plugin_cb_flags, callbacks, ...)
+ */
+#include <libqemu/libqemu.h>
+
 #include <scp/report.h>
 
 /* libqemu types forward declaration */
@@ -111,6 +116,9 @@ public:
     LibQemu(LibraryLoaderIface& library_loader, const char* lib_path);
     LibQemu(LibraryLoaderIface& library_loader, Target t);
     ~LibQemu();
+
+    /* TCG plugin API: returns the libqemu-exports table. */
+    const LibQemuExports& plugin_api() const;
 
     void push_qemu_arg(const char* arg);
     void push_qemu_arg(std::initializer_list<const char*> args);
