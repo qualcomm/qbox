@@ -115,6 +115,9 @@ private:
 
                 sc_core::sc_unsuspendable();
                 (*core->running_job)();
+                /* Drain any notify(SC_ZERO_TIME) events the job queued
+                 * (e.g. deferred IRQ SC_METHODs) before allowing suspend. */
+                wait(sc_core::SC_ZERO_TIME);
                 sc_core::sc_suspendable();
 
                 lock.lock();
