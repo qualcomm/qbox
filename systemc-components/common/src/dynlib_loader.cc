@@ -205,6 +205,9 @@ private:
         handle = LoadLibraryExA(lib_name.c_str(), NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
 #else
         handle = dlopen(lib_name.c_str(), RTLD_NOW);
+        if (handle == nullptr) {
+            m_last_error = "load_library_internal: Library " + lib_name + " is not loaded (" + dlerror() + ").";
+        }
 #endif
         return handle;
     }
