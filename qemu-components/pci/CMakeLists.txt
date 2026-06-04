@@ -1,6 +1,7 @@
 add_subdirectory(qemu_gpex)
 add_subdirectory(qemu_xhci)
 add_subdirectory(rtl8139_pci)
+add_subdirectory(e1000e_pci)
 add_subdirectory(virtio_gpu_gl_pci)
 add_subdirectory(virtio_gpu_cl_pci)
 add_subdirectory(virtio_gpu_qnn_pci)
