@@ -1,6 +1,7 @@
 add_subdirectory(cpu_arm_cortex_a53)
 add_subdirectory(cpu_arm_cortex_a55)
 add_subdirectory(cpu_arm_cortex_a76)
+add_subdirectory(cpu_arm_cortex_a78c)
 add_subdirectory(cpu_arm_cortex_a710)
 add_subdirectory(cpu_arm_cortex_m3)
 add_subdirectory(cpu_arm_cortex_m7)
