@@ -362,6 +362,16 @@ if (NOT WITHOUT_QEMU)
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}>
     )
 
+    # Glib shim path (BUILD_INTERFACE only): shadows system glib for any
+    # in-tree TU that transitively includes qemu-plugin.h via libqemu's
+    # generated typedefs.h (which sits inside an extern "C" block in
+    # libqemu.h). Forward-decls of GArray/GByteArray are sufficient
+    # because qbox C++ never accesses glib internals.
+    target_include_directories(
+        ${PROJECT_NAME} BEFORE PUBLIC
+        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/qemu-components/common/include/glib_shim>
+    )
+
     target_link_libraries(${PROJECT_NAME} PUBLIC libqemu)
 
     set(LIBQEMU_CXX_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/qemu-components/common/include/libqemu-cxx)
