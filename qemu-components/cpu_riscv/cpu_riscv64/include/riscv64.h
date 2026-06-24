@@ -11,6 +11,7 @@
 #include <string>
 #include <functional>
 
+#include <cci_configuration>
 #include <libqemu-cxx/target/riscv.h>
 
 #include <libgssync.h>
@@ -22,6 +23,12 @@ class QemuCpuRiscv64 : public QemuCpu
 {
 public:
     sc_core::sc_vector<QemuTargetSignalSocket> irq_in;
+
+    // CCI parameters for RISC-V CPU configuration
+    cci::cci_param<uint64_t> p_resetvec;
+    cci::cci_param<bool> p_pmp;
+    cci::cci_param<bool> p_smaia;
+    cci::cci_param<bool> p_ssaia;
 
 protected:
     uint64_t m_hartid;
@@ -44,6 +51,11 @@ public:
          */
         , m_irq_ev(true)
         , irq_in("irq_in", 32)
+        // Initialize CCI parameters with default values
+        , p_resetvec("resetvec", 0x0, "Reset vector address")
+        , p_pmp("pmp", false, "Enable Physical Memory Protection")
+        , p_smaia("smaia", false, "Enable Smaia (AIA M-mode CSRs)")
+        , p_ssaia("ssaia", false, "Enable Ssaia (AIA S-mode CSRs)")
     {
         m_external_ev |= m_irq_ev;
         for (auto& irq : irq_in) {
@@ -57,6 +69,17 @@ public:
 
         qemu::CpuRiscv64 cpu(get_qemu_dev());
         cpu.set_prop_int("hartid", m_hartid);
+
+        // Set properties from CCI parameters
+        cpu.set_prop_int("resetvec", p_resetvec);
+        cpu.set_prop_bool("pmp", p_pmp);
+        if (p_smaia) {
+            cpu.set_prop_bool("smaia", true);
+        }
+        if (p_ssaia) {
+            cpu.set_prop_bool("ssaia", true);
+        }
+
         cpu.set_mip_update_callback(std::bind(&QemuCpuRiscv64::mip_update_cb, this, std::placeholders::_1));
     }
 

@@ -31,6 +31,7 @@ public:
 
 protected:
     cci::cci_param<unsigned int> p_num_cpu;
+    cci::cci_param<unsigned int> p_first_cpu_index;
     cci::cci_param<unsigned int> p_num_spi;
     cci::cci_param<unsigned int> p_revision;
     cci::cci_param<std::vector<unsigned int> > p_redist_region;
@@ -73,6 +74,7 @@ public:
     arm_gicv3(const sc_core::sc_module_name& name, QemuInstance& inst, unsigned num_cpus = 0)
         : QemuDevice(name, inst, get_gicv3_type(inst))
         , p_num_cpu("num_cpus", num_cpus, "Number of CPU interfaces")
+        , p_first_cpu_index("first_cpu_index", 0, "index of the first cpu attached to the GIC (default 0)")
         , p_num_spi("num_spi", 0, "Number of shared peripheral interrupts")
         , p_revision("revision", 3, "Revision of the GIC (3 -> v3, 4 -> v4)")
         // , p_redist_region("redist_region", std::vector<unsigned int>({}),
@@ -102,6 +104,7 @@ public:
         int i;
 
         m_dev.set_prop_int("num-cpu", p_num_cpu);
+        m_dev.set_prop_int("first-cpu-index", p_first_cpu_index);
         m_dev.set_prop_int("num-irq", p_num_spi + NUM_PPI);
         m_dev.set_prop_int("revision", p_revision);
 

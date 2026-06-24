@@ -93,8 +93,9 @@ smmu500<BUSWIDTH>::smmu500(sc_core::sc_module_name _name)
     reset.register_value_changed_cb([&](bool value) {
         if (value) {
             SCP_WARN(()) << "Reset";
+            M.reset(value);
+            start_of_simulation();
         }
-        M.reset(value);
     });
 }
 

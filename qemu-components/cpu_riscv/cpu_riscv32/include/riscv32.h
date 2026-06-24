@@ -50,6 +50,9 @@ public:
     cci::cci_param<uint64_t> p_mimpid;
     cci::cci_param<uint64_t> p_marchid;
     cci::cci_param<uint64_t> p_resetvec;
+    cci::cci_param<bool> p_smrnmi;
+    cci::cci_param<bool> p_smaia;
+    cci::cci_param<bool> p_ssaia;
     QemuCpuRiscv32(const sc_core::sc_module_name& name, QemuInstance& inst, const char* model, uint64_t hartid)
         : QemuCpu(name, inst, std::string(model) + "-riscv")
         , m_hartid(hartid)
@@ -73,6 +76,9 @@ public:
         , p_mimpid("mimpid", 0, "Implementation ID")
         , p_marchid("marchid", 0, "Architecture ID")
         , p_resetvec("resetvec", 0x0, "Reset vector address")
+        , p_smrnmi("smrnmi", false, "Enable Smrnmi (RNMI M-mode CSRs 0x740-0x744)")
+        , p_smaia("smaia", false, "Enable Smaia (AIA M-mode CSRs)")
+        , p_ssaia("ssaia", false, "Enable Ssaia (AIA S-mode CSRs)")
     {
         m_external_ev |= m_irq_ev;
         for (auto& irq : irq_in) {
@@ -93,6 +99,16 @@ public:
         cpu.set_prop_bool("pmp", p_pmp);
         cpu.set_prop_bool("mmu", p_mmu);
         cpu.set_prop_str("priv_spec", p_priv_spec.get_value().c_str());
+
+        if (p_smrnmi) {
+            cpu.set_prop_bool("smrnmi", true);
+        }
+        if (p_smaia) {
+            cpu.set_prop_bool("smaia", true);
+        }
+        if (p_ssaia) {
+            cpu.set_prop_bool("ssaia", true);
+        }
 
         // Cache block operation sizes
         cpu.set_prop_int("cbom_blocksize", p_cbom_blocksize);

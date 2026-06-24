@@ -105,6 +105,10 @@ private:
         for (DWORD i = 0; i < cNumRead; ++i) {
             const INPUT_RECORD& record = irInBuf[i];
             if (record.EventType == KEY_EVENT && record.Event.KeyEvent.bKeyDown) {
+                if (record.Event.KeyEvent.uChar.AsciiChar == 0x1c) {
+                    raise(SIGBREAK);
+                    return;
+                }
                 enqueue(record.Event.KeyEvent.uChar.AsciiChar);
             }
         }

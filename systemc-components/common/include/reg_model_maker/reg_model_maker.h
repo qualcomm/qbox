@@ -12,7 +12,6 @@
 #include <scp/report.h>
 #include <rapidjson/include/rapidjson/document.h>
 #include <zip.h>
-#include <zipint.h>
 #include <cciutils.h>
 #include <gs_memory.h>
 #include <router.h>
