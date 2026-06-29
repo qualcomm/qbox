@@ -26,7 +26,8 @@ protected:
     cci::cci_param<unsigned int> p_nr_frames;
     cci::cci_param<unsigned int> p_nr_views;
     cci::cci_param<unsigned int> p_frame_stride;
-    cci::cci_param<std::string> p_ticker_ctrl;
+    cci::cci_param<uint32_t> p_freq_hz;
+    cci::cci_param<uint32_t> p_freq_scale;
     /* One cnttid register covers 8 frames (4 bits/nibble per frame in a 32-bit register).
      * Number of cnttid registers = ceil(nr_frames / 8). */
     std::vector<std::unique_ptr<cci::cci_param<unsigned int>>> p_cnttid;
@@ -55,7 +56,8 @@ public:
         , p_nr_frames("nr_frames", 2, "Number of frames")
         , p_nr_views("nr_views", 1, "Number of views")
         , p_frame_stride("frame_stride", 0x1000, "Frame stride in bytes")
-        , p_ticker_ctrl("ticker_ctrl", "auto", "Start the QTIMER by ticking or no (auto/on/off)")
+        , p_freq_hz("freq_hz", 19200000, "freq of the timer in hz")
+        , p_freq_scale("freq_scale", 100, "scale down factor of the timer freq")
         , socket("mem", inst)
         , view_socket("mem_view", inst)
         , irq("irq", p_nr_frames.get_value(), [](const char* n, size_t i) { return new QemuInitiatorSignalSocket(n); })
@@ -76,7 +78,8 @@ public:
         m_dev.set_prop_int("nr_frames", p_nr_frames);
         m_dev.set_prop_int("nr_views", p_nr_views);
         m_dev.set_prop_int("frame_stride", p_frame_stride);
-        m_dev.set_prop_str("ticker-ctrl", p_ticker_ctrl.get_value().c_str());
+        m_dev.set_prop_int("freq", p_freq_hz.get_value());
+        m_dev.set_prop_int("freq-scale", p_freq_scale.get_value());
         for (unsigned int i = 0; i < p_cnttid.size(); ++i) {
             m_dev.set_prop_int((std::string("cnttid_") + std::to_string(i)).c_str(), *p_cnttid[i]);
         }
