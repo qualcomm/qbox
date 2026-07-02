@@ -25,6 +25,14 @@ TEST_BENCH(LoaderTest, SimpleReadELFFile)
 
     ASSERT_EQ(m_initiator.do_read(0x0000, data), tlm::TLM_OK_RESPONSE);
     ASSERT_EQ(data, 0xaf);
+
+    /* CRLF bytes at offset 0x0004-0x0005: without O_BINARY on Windows, 0x0D 0x0A
+     * is collapsed to 0x0A by the CRT text-mode translation, corrupting the data. */
+    ASSERT_EQ(m_initiator.do_read(0x0004, data), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(data, 0x0d);
+
+    ASSERT_EQ(m_initiator.do_read(0x0005, data), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(data, 0x0a);
 }
 
 TEST_BENCH(LoaderTest, SimpleReadData)

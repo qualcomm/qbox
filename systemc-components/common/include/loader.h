@@ -645,7 +645,12 @@ private:
         {
             if (elf_version(EV_CURRENT) == EV_NONE) SCP_FATAL("elf_reader") << "failed to read libelf version";
 
+#ifdef _WIN32
+            m_fd = open(filename(), O_RDONLY | O_BINARY, 0);
+#else
             m_fd = open(filename(), O_RDONLY, 0);
+#endif
+
             if (m_fd < 0) SCP_FATAL("elf_reader") << "cannot open elf file " << filename();
 
             Elf* elf = elf_begin(m_fd, ELF_C_READ, nullptr);
