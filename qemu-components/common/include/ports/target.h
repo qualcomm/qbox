@@ -96,6 +96,11 @@ public:
             return;
         }
 
+        if (m_inst == nullptr) {
+            trans.set_response_status(tlm::TLM_OK_RESPONSE);
+            return;
+        }
+
         current_cpu_save = push_current_cpu(trans);
 
         /*
