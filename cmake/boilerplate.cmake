@@ -265,7 +265,6 @@ macro(gs_enable_testing)
             RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
           )
         endif()
-        target_link_libraries(${PROJECT_NAME} INTERFACE gtest gmock)
       endif()
       enable_testing()
       cmake_host_system_information(RESULT _nproc QUERY NUMBER_OF_LOGICAL_CORES)
