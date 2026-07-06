@@ -96,6 +96,9 @@ public:
         qemu::CpuRiscv32 cpu(get_qemu_dev());
         cpu.register_reset();
     }
+
+    // Runtime reset-vector override; the core re-reads it on the next reset.
+    void set_resetvec(uint64_t addr) { get_qemu_dev().set_prop_uint("resetvec", addr); }
 };
 
 class cpu_riscv64 : public QemuCpuRiscv64
