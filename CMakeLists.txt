@@ -373,7 +373,7 @@ if (NOT WITHOUT_QEMU)
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/qemu-components/common/include/glib_shim>
     )
 
-    target_link_libraries(${PROJECT_NAME} PUBLIC libqemu)
+    target_link_libraries(${PROJECT_NAME} PUBLIC libqemu::libqemu)
 
     set(LIBQEMU_CXX_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/qemu-components/common/include/libqemu-cxx)
     install(DIRECTORY ${LIBQEMU_CXX_INCLUDE_DIR} TYPE INCLUDE)
