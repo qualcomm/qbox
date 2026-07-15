@@ -130,6 +130,7 @@ class QemuCpu : public QemuDevice, public QemuInitiatorIface
         using CpuTimeSyncStrategy::CpuTimeSyncStrategy;
 
         void on_end_of_elaboration() override;
+        void on_destroy() override;
     };
 
 private:
@@ -669,7 +670,17 @@ public:
             if (m_resetting == none) return; // dont finish a finished reset!
             while (m_resetting == start_reset) {
                 SCP_WARN(())("Hold reset");
+                /*
+                 * Kick under the BQL. qemu_cpu_kick() broadcasts the vCPU's
+                 * halt_cond without the BQL, so a bare kick can be lost against a
+                 * vCPU entering qemu_cond_wait(halt_cond) (e.g. sleeping in WFI)
+                 * and the queued reset(true) job is never run. Holding the BQL
+                 * serialises against that. Release it before waiting, the vCPU
+                 * needs it to run the job.
+                 */
+                m_inst.get().lock_iothread();
                 m_cpu.kick(); // without this kick, async_safe_run may not be called (QEMU race)
+                m_inst.get().unlock_iothread();
                 sc_core::wait(m_start_reset_done_ev);
             }
             m_inst.get().lock_iothread();
@@ -905,6 +916,25 @@ inline void QemuCpu::McipsSync::on_end_of_elaboration()
         SCP_FATAL(()) << "Failed to set insn_per_second for cpu_" << m_qemu_cpu.m_cpu.get_index();
         sc_assert(false);
     }
+}
+
+inline void QemuCpu::McipsSync::on_destroy()
+{
+    /*
+     * In MCIPS mode the vCPU is a free-running MTTCG thread with no QK/deadline
+     * timer gating it to SystemC. end_of_simulation() only requests halt+unplug
+     * asynchronously, so after sc_stop() the thread can still be in tcg_cpu_exec()
+     * and touch the QemuInstance after it is freed -> use-after-free. By now the
+     * simulation has stopped and runonsysc jobs are cancelled, so it is safe to
+     * synchronously join the vCPU thread before the QemuInstance is destroyed.
+     */
+    if (!m_qemu_cpu.m_started || m_qemu_cpu.m_coroutines || !m_qemu_cpu.m_cpu.valid()) {
+        return;
+    }
+
+    m_qemu_cpu.m_inst.get().lock_iothread();
+    m_qemu_cpu.m_cpu.remove_sync(); // stop + unplug + join the vCPU thread
+    m_qemu_cpu.m_inst.get().unlock_iothread();
 }
 
 #endif
