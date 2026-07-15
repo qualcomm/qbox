@@ -209,6 +209,7 @@ find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBELF REQUIRED IMPORTED_TARGET libelf)
 pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
+pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0)
 
 # CPM packages (fetched from source)
 gs_addexpackage("gh:google/googletest#v1.15.2")
@@ -411,6 +412,7 @@ target_include_directories(
 
 target_link_libraries(${PROJECT_NAME} PUBLIC
         ${TARGET_LIBS}
+        PkgConfig::GLIB
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -485,4 +487,3 @@ gs_enable_testing()
 if(UNIX AND NOT APPLE)
     target_link_libraries(${PROJECT_NAME} INTERFACE rt)
 endif()
-
