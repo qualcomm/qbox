@@ -342,7 +342,7 @@ if (NOT WITHOUT_QEMU)
     target_include_directories(
         ${PROJECT_NAME} PUBLIC
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/qemu-components/common/include>
-        $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}>
+        $<INSTALL_INTERFACE:qemu-components/common/include>
     )
 
     # Glib shim path (BUILD_INTERFACE only): shadows system glib for any
