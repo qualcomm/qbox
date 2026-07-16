@@ -9,6 +9,7 @@
 
 #define INCBIN_SILENCE_BITCODE_WARNING
 #include <reg_model_maker/incbin.h>
+#include <zip_loader.h>
 
 INCBIN(ZipArchive_smmu500_, __FILE__ "_config.zip");
 
@@ -27,9 +28,7 @@ template <unsigned int BUSWIDTH>
 smmu500<BUSWIDTH>::smmu500(sc_core::sc_module_name _name)
     : sc_core::sc_module(_name)
     , m_broker(cci::cci_get_broker())
-    , m_jza(
-          zip_open_from_source(zip_source_buffer_create(gZipArchive_smmu500_Data, gZipArchive_smmu500_Size, 0, nullptr),
-                               ZIP_RDONLY, nullptr))
+    , m_jza(gs::zip_open_from_memory(gZipArchive_smmu500_Data, gZipArchive_smmu500_Size))
     , loaded_ok(m_jza.json_read_cci(m_broker, std::string(name()) + ".smmu500"))
     , M("smmu500", m_jza)
     , p_pamax("pamax", 48, "")

@@ -21,6 +21,7 @@
 
 #include "onmethod.h"
 #include "elf_loader.h"
+#include "zip_loader.h"
 
 #include <cinttypes>
 #include <list>
@@ -28,7 +29,6 @@
 #include <vector>
 #include <limits>
 #include <filesystem>
-#include <zip.h>
 
 #ifndef _WIN32
 #include <fcntl.h>
@@ -179,14 +179,9 @@ private:
 
 public:
     loader(sc_core::sc_module_name name)
-        : m_broker(cci::cci_get_broker())
-        , initiator_socket("initiator_socket") //, [&](std::string s) -> void { register_boundto(s); })
-        , reset("reset")
+        : m_broker(cci::cci_get_broker()), initiator_socket("initiator_socket"), reset("reset")
     {
         SCP_TRACE(())("default constructor");
-        // Respect the single function call semantics,
-        // but ensure execution happens on the main SystemC thread, not on a light weight process,
-        // as the loader uses a lot of stack
         reset.register_value_changed_cb([&](bool value) { m_onMethod.run([&]() { doreset(value); }); });
     }
     void doreset(bool value)
@@ -197,10 +192,7 @@ public:
         }
     }
     loader(sc_core::sc_module_name name, std::function<void(const uint8_t* data, uint64_t offset, uint64_t len)> _write)
-        : m_broker(cci::cci_get_broker())
-        , initiator_socket("initiator_socket") //, [&](std::string s) -> void { register_boundto(s); })
-        , reset("reset")
-        , write_cb(_write)
+        : m_broker(cci::cci_get_broker()), initiator_socket("initiator_socket"), reset("reset"), write_cb(_write)
     {
         SCP_TRACE(())("constructor with callback");
         m_use_callback = true;
@@ -245,7 +237,6 @@ protected:
                 uint64_t file_offset = 0, file_data_len = 0;
                 if (!((gs::cci_get<uint64_t>(m_broker, name + ".archived_file_offset", file_offset) &&
                        gs::cci_get<uint64_t>(m_broker, name + ".archived_file_size", file_data_len)))) {
-                    // can't stat file size here, as the actual file inside archive is accessed inside zip_file_load()
                     file_data_len = 0;
                     file_offset = 0;
                 }
@@ -309,7 +300,6 @@ public:
      *
      * @param filename Name of the file
      * @param addr the address where the memory file is to be read
-     * @return size_t
      */
     void file_load(std::string& filename, uint64_t addr, uint64_t file_offset = 0,
                    uint64_t file_data_len = std::numeric_limits<uint64_t>::max())
@@ -339,95 +329,20 @@ public:
         fin.close();
     }
 
-    /*
-     - p_archive: pointer to a zip_t struct if the zip archive is opened outside this function.
-     - archive_name: the name of the zip archive.
-     - file_name: name of the file to be extracted from archive_name.
-    */
     void zip_file_load(zip_t* p_archive, const std::string& archive_name, uint64_t addr,
                        const std::string& file_name = "", uint64_t file_offset = 0, uint64_t file_data_len = 0,
                        bool is_compressed = false, const std::string& uncompressed_file_name = "")
     {
-        if (archive_name.empty()) SCP_FATAL(()) << "Missing zip archive name!";
-        zip_t* z_archive = p_archive;
-        if (!z_archive) {
-            z_archive = zip_open(archive_name.c_str(), 0, nullptr);
-            if (!z_archive) SCP_FATAL(()) << "Can't open zip archive: " << archive_name;
-        }
-        zip_int64_t num_entries = zip_get_num_entries(z_archive, ZIP_FL_UNCHANGED);
-        if (num_entries < 0)
-            SCP_FATAL(()) << "Can't get the number of the entries in zip archive: " << archive_name
-                          << " may be the archive file is corrupted!";
-        if (num_entries == 0) SCP_FATAL(()) << "There is no files in the zip archive: " << archive_name;
-        zip_stat_t z_stat;
-        if (num_entries > 1) {
-            if (file_name.empty())
-                SCP_FATAL(()) << "many files exist in zip arcive: " << archive_name
-                              << " but file name is not specified";
-            if (zip_stat(z_archive, file_name.c_str(), ZIP_FL_NOCASE, &z_stat) < 0)
-                SCP_FATAL(()) << "Can't find any file named: " << file_name << " in the zip archive: " << archive_name;
-        } else { // num of entries = 1
-            if (zip_stat_index(z_archive, 0, ZIP_FL_NOCASE, &z_stat) < 0)
-                SCP_FATAL(()) << "Can't get status os the file inside zip archive: " << archive_name;
-        }
-        zip_int64_t used_data_len = 0;
+        std::vector<uint8_t> data;
         if (!is_compressed) {
-            std::vector<uint8_t> bin_info(z_stat.size);
-            used_data_len = zip_read_file(z_archive, archive_name, z_stat, bin_info, file_offset, file_data_len);
-            SCP_DEBUG(()) << "load data from zip archive " << archive_name << " to addr: 0x" << std::hex << addr
-                          << " len: 0x" << std::hex << used_data_len;
-            send(addr, reinterpret_cast<uint8_t*>(&bin_info[0]) + file_offset, used_data_len);
+            data = gs::zip_extract(p_archive, archive_name, file_name, file_offset, file_data_len);
         } else {
-            std::vector<uint8_t> compressed_file_data(z_stat.size);
-            zip_read_file(z_archive, file_name, z_stat, compressed_file_data, 0, z_stat.size);
-            zip_t* f_archive = zip_open_from_source(
-                zip_source_buffer_create(reinterpret_cast<uint8_t*>(&compressed_file_data[0]), z_stat.size, 0, nullptr),
-                ZIP_RDONLY, nullptr);
-            if (!f_archive) SCP_FATAL(()) << "Can't open zip archive: " << file_name;
-            zip_int64_t f_num_entries = zip_get_num_entries(f_archive, ZIP_FL_UNCHANGED);
-            if (f_num_entries != 1)
-                SCP_FATAL(()) << "Compressed file: " << file_name << " in: " << archive_name << " is corrupted!";
-            zip_stat_t f_stat;
-            if (zip_stat(f_archive, uncompressed_file_name.c_str(), ZIP_FL_NOCASE, &f_stat) < 0)
-                SCP_FATAL(()) << "Can't find any file named: " << uncompressed_file_name
-                              << " in the zip archive: " << file_name << " extracted from: " << archive_name;
-            std::vector<uint8_t> bin_info(f_stat.size);
-            used_data_len = zip_read_file(f_archive, file_name, f_stat, bin_info, file_offset, file_data_len);
-            SCP_DEBUG(()) << "load data from zip archive " << file_name << " to addr: 0x" << std::hex << addr
-                          << " len: 0x" << std::hex << used_data_len;
-            send(addr, reinterpret_cast<uint8_t*>(&bin_info[0]) + file_offset, used_data_len);
+            data = gs::zip_extract_nested(p_archive, archive_name, file_name, uncompressed_file_name, file_offset,
+                                          file_data_len);
         }
-    }
-
-    zip_int64_t zip_read_file(zip_t* z_archive, const std::string& archive_name, const zip_stat_t& z_stat,
-                              std::vector<uint8_t>& data, uint64_t file_offset, uint64_t file_data_len)
-    {
-        uint8_t* bin_info_t = &data[0];
-        zip_file_t* fd = zip_fopen(z_archive, z_stat.name, ZIP_FL_NOCASE);
-        if (!fd) SCP_FATAL(()) << "Can't open file: " << z_stat.name << "in zip archive: " << archive_name;
-        zip_int64_t used_file_data_len = 0;
-        if (file_data_len == 0)
-            used_file_data_len = z_stat.size;
-        else if ((file_offset < z_stat.size) && ((file_data_len + file_offset) > z_stat.size))
-            used_file_data_len = z_stat.size - file_offset;
-        else if (file_offset > z_stat.size)
-            SCP_FATAL(()) << "file offset (" << file_offset << " )is bigger than the size (" << z_stat.size << ") of "
-                          << z_stat.name << "in zip archive: " << archive_name;
-        else
-            used_file_data_len = file_data_len;
-
-        zip_int64_t read_bytes_num = 0, rem = z_stat.size;
-        while (rem > 0) {
-            read_bytes_num = zip_fread(fd, reinterpret_cast<uint8_t*>(bin_info_t), rem);
-            if (read_bytes_num < 0) {
-                SCP_FATAL(()) << "Can't read " << used_file_data_len << " from " << z_stat.name
-                              << " in zip archive: " << archive_name;
-            }
-            bin_info_t += read_bytes_num;
-            rem -= read_bytes_num;
-        }
-        zip_fclose(fd);
-        return used_file_data_len;
+        SCP_DEBUG(()) << "load data from zip archive " << archive_name << " to addr: 0x" << std::hex << addr
+                      << " len: 0x" << std::hex << data.size();
+        send(addr, data.data(), data.size());
     }
 
     void csv_load(std::string filename, uint64_t offset, std::string addr_str, std::string value_str, bool byte_swap)
@@ -465,8 +380,6 @@ public:
     }
 
 private:
-    // it makes no sense to expose this function, you could only sensibly use it from a config
-    // anyway
     void data_load(std::string param, uint64_t addr, bool byte_swap)
     {
         for (std::string s : sc_cci_children(param.c_str())) {

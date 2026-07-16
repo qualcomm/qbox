@@ -24,6 +24,7 @@ unsigned int smmuv3_zip_archive_size() noexcept;
 #include <tlm-extensions/underlying-dmi.h>
 #include <registers.h>
 #include <reg_model_maker/reg_model_maker.h>
+#include <zip_loader.h>
 
 #include <algorithm>
 #include <array>
@@ -1131,9 +1132,7 @@ smmuv3<BUSWIDTH>::smmuv3(sc_core::sc_module_name name)
     : sc_core::sc_module(name)
     , smmuv3_gen()
     , m_broker(cci::cci_get_broker())
-    , m_jza(zip_open_from_source(
-          zip_source_buffer_create(smmuv3_zip_archive_data(), smmuv3_zip_archive_size(), 0, nullptr), ZIP_RDONLY,
-          nullptr))
+    , m_jza(gs::zip_open_from_memory(smmuv3_zip_archive_data(), smmuv3_zip_archive_size()))
     , m_loaded_ok(m_jza.json_read_cci(m_broker, std::string(this->name()) + ".smmuv3"))
     , M("smmuv3", m_jza)
     , p_pamax("pamax", 48)
