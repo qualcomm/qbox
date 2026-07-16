@@ -204,30 +204,10 @@ mark_as_advanced(CMAKE_CXX_STANDARD_REQUIRED)
 #This is an exclusive define for the SCP library which allow to switch ON/OFF if we want thread local or not.
 add_compile_definitions(DISABLE_REPORT_THREAD_LOCAL)
 
-find_path(LIBELF_INCLUDE_DIR NAMES "libelf.h" "libelf/libelf.h"
-          HINTS $ENV{LIBELF_HOME}/include /usr/include /usr/local/include
-          REQUIRED)
-
-find_library(LIBELF_LIBRARIES NAMES elf "libelf.a"
-          HINTS $ENV{LIBELF_HOME}/lib /usr/lib /lib /usr/local/lib
-          REQUIRED)
-
-find_library(LIBZ_LIBRARIES NAMES z "libz.a"
-          HINTS $ENV{LIBZ_HOME}/lib /usr/lib /lib
-          REQUIRED)
-
-list(APPEND LIBELF_LIBRARIES ${LIBZ_LIBRARIES})
-list(APPEND LIBELF_INCLUDE_DIR ${LIBELF_INCLUDE_DIR}/libelf)
-
-FIND_PACKAGE_HANDLE_STANDARD_ARGS(LibELF DEFAULT_MSG
-                                  LIBELF_LIBRARIES
-                                  LIBELF_INCLUDE_DIR)
-
-mark_as_advanced(LIBELF_INCLUDE_DIR LIBELF_LIBRARIES)
-
 # System / local packages (must be installed on the host)
 find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBELF REQUIRED IMPORTED_TARGET libelf)
 pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
 
 # CPM packages (fetched from source)
@@ -280,6 +260,7 @@ endif()
 
 set(systemc_srcs
     systemc-components/common/src/cciutils.cc
+    systemc-components/common/src/elf_loader.cc
     systemc-components/common/src/luautils.cc
     systemc-components/common/src/uutils.cc
     systemc-components/common/src/memory_services.cc
@@ -413,12 +394,11 @@ target_include_directories(
     ${PROJECT_NAME} PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/systemc-components/common/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}>
-    ${LIBELF_INCLUDE_DIR}
     )
 
 target_link_libraries(${PROJECT_NAME} PUBLIC
         ${TARGET_LIBS}
-        ${LIBELF_LIBRARIES}
+        PkgConfig::LIBELF
         Threads::Threads
         rpc
         ${CROW_DEP}
