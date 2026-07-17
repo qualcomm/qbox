@@ -11,6 +11,7 @@
 #include <scp/report.h>
 #include <mutex>
 #include <type_traits>
+#include <runonsysc.h>
 
 #ifdef SC_HAS_OB_EVENT
 #include <sysc/utils/sc_ob_event.h>
@@ -58,6 +59,7 @@ class sc_sync_window : public sc_core::sc_module, public sc_core::sc_prim_channe
     sc_event m_update_ev;
     std::mutex m_mutex;
     sc_sync_policy policy;
+    gs::runonsysc m_sc; // run attach/detach_suspending on the SystemC thread
 
 public:
     struct window {
@@ -180,7 +182,8 @@ public:
      */
     void attach()
     {
-        async_attach_suspending();
+        /* Run on the SystemC thread; wait=false so a BQL-holding caller can't deadlock. */
+        m_sc.run_on_sysc([this] { async_attach_suspending(); }, false);
         m_is_attached = true;
     }
     /**
@@ -197,7 +200,7 @@ public:
     {
         async_set_window({ now, sc_core::sc_max_time() }); // setting open window before detaching, since
                                                            // async_set_window required an attached window.
-        async_detach_suspending();
+        m_sc.run_on_sysc([this] { async_detach_suspending(); }, false);
         m_is_attached = false;
     }
     void bind(sc_sync_window* other)
