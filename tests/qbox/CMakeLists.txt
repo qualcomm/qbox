@@ -155,7 +155,7 @@ function(qbox_add_cpu_test target timeout_s)
 
             # On Windows, coroutine mode is only supported with 1 or 2 CPUs
             set(WINDOWS_COROUTINE_ALLOWED_NUM_CPU 1 2)
-            if (("${threading}" STREQUAL "COROUTINE") AND (NOT (${num_cpu} in WINDOWS_COROUTINE_ALLOWED_NUM_CPU) ) AND (WIN32))
+            if (("${threading}" STREQUAL "COROUTINE") AND (NOT ("${num_cpu}" IN_LIST WINDOWS_COROUTINE_ALLOWED_NUM_CPU)) AND (WIN32))
                continue()
             endif()
 
