@@ -28,3 +28,61 @@ jobs:
 
       - name: Test
         run: ctest --preset "${{ matrix.preset }}"
+
+      - name: Install qbox
+        if: matrix.os == 'ubuntu-24.04' && matrix.preset == 'gcc'
+        run: cmake --install build
+
+      - name: Package qbox install tree
+        if: matrix.os == 'ubuntu-24.04' && matrix.preset == 'gcc'
+        run: tar -C build -cf qbox-install.tar install
+
+      - name: Upload qbox install tree
+        if: matrix.os == 'ubuntu-24.04' && matrix.preset == 'gcc'
+        uses: actions/upload-artifact@v4
+        with:
+          name: qbox-install-ubuntu-24.04-gcc
+          path: qbox-install.tar
+          compression-level: 0
+          retention-days: 1
+
+  hello-qbox:
+    name: Build and run hello-qbox
+    needs: build
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo scripts/install_dependencies.sh
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Download qbox install tree
+        uses: actions/download-artifact@v4
+        with:
+          name: qbox-install-ubuntu-24.04-gcc
+          path: "${{ runner.temp }}/qbox-artifact"
+
+      - name: Extract qbox install tree
+        run: |
+          mkdir -p "${{ runner.temp }}/qbox-install"
+          tar -C "${{ runner.temp }}/qbox-install" --strip-components=1 \
+            -xf "${{ runner.temp }}/qbox-artifact/qbox-install.tar"
+
+      - name: Configure hello-qbox
+        run: >
+          cmake -S examples/hello-qbox -B examples/hello-qbox/build
+          -DCMAKE_PREFIX_PATH="${{ runner.temp }}/qbox-install"
+
+      - name: Build hello-qbox
+        run: cmake --build examples/hello-qbox/build --parallel $(nproc)
+
+      - name: Run hello-qbox and check output
+        working-directory: examples/hello-qbox
+        run: |
+          set -o pipefail
+          timeout 5s ./build/hello-qbox-vp --gs_luafile platform.lua \
+            2>&1 | tee run.log
+          grep -Fq 'Hello from Qbox!' run.log
