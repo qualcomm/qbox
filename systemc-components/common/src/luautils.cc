@@ -6,6 +6,8 @@
 
 #include "luafile_tool.h"
 
+#include <filesystem>
+
 int lua_cci_get_val(lua_State* L)
 {
     if (!lua_checkstack(L, 1)) {
@@ -72,28 +74,37 @@ gs::LuaFile_Tool::LuaFile_Tool(std::string _orig_name)
 
 int gs::LuaFile_Tool::config(cci::cci_broker_handle a_broker, const char* a_config_file, char* a_images_dir)
 {
-    SCP_INFO(()) << "Read lua file '" << a_config_file << "'";
+    const char* config_file_path = a_config_file;
+    std::string config_file;
+    try {
+        config_file = std::filesystem::absolute(a_config_file).generic_string();
+        config_file_path = config_file.c_str();
+    } catch (const std::filesystem::filesystem_error& e) {
+        SCP_WARN(()) << "Could not normalize lua file path '" << a_config_file << "': " << e.what();
+    }
+
+    SCP_INFO(()) << "Read lua file '" << config_file_path << "'";
 
     // start Lua
     lua_State* L = luaL_newstate();
     luaL_openlibs(L);
 
     // load a script as the function "config_chunk"
-    int error = luaL_loadfile(L, a_config_file);
+    int error = luaL_loadfile(L, config_file_path);
     switch (error) {
     case 0:
         break;
     case LUA_ERRSYNTAX:
-        SCP_ERR(()) << "Syntax error reading config file: " << a_config_file;
+        SCP_ERR(()) << "Syntax error reading config file: " << config_file_path;
         return 1;
     case LUA_ERRMEM:
-        SCP_ERR(()) << "Error allocating memory to read config file: " << a_config_file;
+        SCP_ERR(()) << "Error allocating memory to read config file: " << config_file_path;
         return 1;
     case LUA_ERRFILE:
-        SCP_ERR(()) << "Error opening/reading the config file: " << a_config_file;
+        SCP_ERR(()) << "Error opening/reading the config file: " << config_file_path;
         return 1;
     default:
-        SCP_ERR(()) << "Unknown error loading config file: " << a_config_file;
+        SCP_ERR(()) << "Unknown error loading config file: " << config_file_path;
         return 1;
     }
     lua_setglobal(L, "config_chunk");
@@ -152,7 +163,7 @@ int gs::LuaFile_Tool::config(cci::cci_broker_handle a_broker, const char* a_conf
     lua_getglobal(L, "_G");
     error = setParamsFromLuaTable(a_broker, L, lua_gettop(L));
     if (error < 0) {
-        SCP_INFO(()) << "Error loading lua config file: " << a_config_file;
+        SCP_INFO(()) << "Error loading lua config file: " << config_file_path;
         return error;
     }
     lua_close(L);
