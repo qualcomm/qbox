@@ -1,10 +1,10 @@
 add_library(fss_node SHARED fss_node.cc)
 set_target_properties(fss_node PROPERTIES PREFIX "" LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(fss_node ${TARGET_LIBS})
+target_link_libraries(fss_node qbox-common)
 
 macro(gs_add_test test)
     add_executable(${test} ${test}.cc)
-    target_link_libraries(${test} PRIVATE gtest gmock gs_memory router component_constructor ${TARGET_LIBS})
+     target_link_libraries(${test} PRIVATE gtest gmock gs_memory router component_constructor qbox-common)
     add_test(NAME ${test} COMMAND ${test})
     set_tests_properties(${test} PROPERTIES TIMEOUT 30)
 endmacro()

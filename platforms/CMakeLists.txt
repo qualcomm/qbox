@@ -15,7 +15,7 @@ else()
 endif()
 
 target_link_libraries(platforms-vp
-    ${TARGET_LIBS}
+    qbox-common
 )
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND EXISTS "/etc/lsb-release")

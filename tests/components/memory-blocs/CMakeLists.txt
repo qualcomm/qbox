@@ -1,6 +1,6 @@
 macro(gs_add_test test)
     add_executable(${test} ${test}.cc)
-    target_link_libraries(${test} PRIVATE gs_memory ${TARGET_LIBS} gtest gmock)
+    target_link_libraries(${test} PRIVATE gs_memory qbox-common gtest gmock)
     add_test(NAME ${test} COMMAND ${test})
     set_tests_properties(${test} PROPERTIES TIMEOUT 30)
 endmacro()

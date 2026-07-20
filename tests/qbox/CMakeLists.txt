@@ -224,7 +224,7 @@ function(qbox_add_cpu_test target timeout_s)
         PRIVATE
         cpu_arm_cortexA53 qemu_cpu_hexagon cpu_riscv32
         global_peripheral_initiator router reset_gpio gs_memory smmu500 pass
-        exclusive_monitor display plic_sifive ${TARGET_LIBS} hexagon_globalreg
+        exclusive_monitor display plic_sifive qbox-common hexagon_globalreg
     )
 
     foreach (accel ${QBOX_TEST_ACCELS})
@@ -341,7 +341,7 @@ set(QBOX_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 function(qbox_extra_add_test target)
     add_executable(${target} ${ARGN})
     target_include_directories(${target} PRIVATE ${QBOX_TEST_DIR}/include)
-    target_link_libraries(${target} PRIVATE ${TARGET_LIBS} gtest gmock display)
+    target_link_libraries(${target} PRIVATE qbox-common gtest gmock display)
     add_test(NAME ${target} COMMAND $<TARGET_FILE:${target}>)
 endfunction(qbox_extra_add_test)
 

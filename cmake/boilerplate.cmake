@@ -87,8 +87,7 @@ macro(configure_systemc)
     add_compile_definitions(HAS_CCI)
 
     if(NOT GS_ONLY)
-        list(APPEND TARGET_LIBS SystemC::systemc SystemC::cci-config scp::reporting)
-        set(TARGET_LIBS "${TARGET_LIBS}" CACHE INTERNAL "target_libs")
+        target_link_libraries(qbox-common INTERFACE SystemC::systemc SystemC::cci-config scp::reporting)
     endif()
 endmacro()
 
@@ -113,12 +112,7 @@ macro(gs_create_dymod MODULE_NAME)
   # Avoid to have the "lib" prefix on the name of the library
   set_target_properties(${MODULE_NAME} PROPERTIES PREFIX "")
 
-  if ( TARGET_LIBS )
-    add_dependencies(${MODULE_NAME} ${TARGET_LIBS})
-    target_link_libraries(${MODULE_NAME} PUBLIC
-        ${TARGET_LIBS}
-    )
-  endif()
+  target_link_libraries(${MODULE_NAME} PUBLIC qbox-common)
 
   if (WIN32)
     target_link_libraries(${MODULE_NAME} PRIVATE ws2_32 mswsock)
@@ -135,13 +129,6 @@ macro(gs_create_dymod MODULE_NAME)
                   "${CMAKE_CURRENT_BINARY_DIR}/${MODULE_NAME}_exports.def")
     target_link_options(${MODULE_NAME} PRIVATE -Wl,--export-all-symbols)
   endif()
-
-  foreach(T IN LISTS TARGET_LIBS)
-    target_include_directories(
-      ${MODULE_NAME} PUBLIC
-      $<TARGET_PROPERTY:${T},INTERFACE_INCLUDE_DIRECTORIES>
-    )
-  endforeach()
 
   target_include_directories(
     ${MODULE_NAME} PUBLIC
@@ -198,7 +185,7 @@ macro(build_lua)
       )
       target_compile_definitions(${PROJECT_NAME} INTERFACE HAS_LUA)
       target_link_libraries(${PROJECT_NAME} PUBLIC lua)
-      list(APPEND TARGET_LIBS "lua")
+      target_link_libraries(qbox-common INTERFACE lua)
       install(TARGETS lua EXPORT qboxTargets LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
       install(FILES ${lua_SOURCE_DIR}/lua.h ${lua_SOURCE_DIR}/luaconf.h
                     ${lua_SOURCE_DIR}/lualib.h ${lua_SOURCE_DIR}/lauxlib.h
@@ -206,7 +193,6 @@ macro(build_lua)
   endif()
 endmacro()
 ################################################################################
-
 
 # by default switch on verbosity
 

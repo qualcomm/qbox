@@ -1,6 +1,6 @@
 macro(gs_add_test test)
     add_executable(${test} ${test}.cc)
-    target_link_libraries(${test} PRIVATE gtest gmock router gs_memory memory_dumper ${TARGET_LIBS})
+     target_link_libraries(${test} PRIVATE gtest gmock router gs_memory memory_dumper qbox-common)
     add_test(NAME ${test} COMMAND ${test})
     set_tests_properties(${test} PROPERTIES TIMEOUT 30)
 endmacro()

@@ -91,6 +91,8 @@ file(
 include(${CMAKE_CURRENT_BINARY_DIR}/cmake/CPM.cmake)
 include(${PROJECT_SOURCE_DIR}/cmake/boilerplate.cmake)
 
+add_library(qbox-common INTERFACE)
+
 # Allow using package-lock.cmake files in projects using this boilerplate to
 # pin repos, etc.
 CPMUsePackageLock(${PKG_LOCK})
@@ -337,7 +339,7 @@ if (NOT WITHOUT_QEMU)
     )
 
     if(TARGET libqemu)
-        list(APPEND TARGET_LIBS "libqemu")
+        target_link_libraries(qbox-common INTERFACE libqemu)
     endif()
 
     target_include_directories(
@@ -407,7 +409,9 @@ target_include_directories(
 )
 
 target_link_libraries(${PROJECT_NAME} PUBLIC
-        ${TARGET_LIBS}
+        SystemC::systemc
+        SystemC::cci-config
+        scp::reporting
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -458,14 +462,11 @@ install(FILES
     DESTINATION lib/cmake/qbox-${PROJECT_VERSION}
 )
 
-list(APPEND TARGET_LIBS "qbox::${PROJECT_NAME}")
-set(TARGET_LIBS "${TARGET_LIBS}" CACHE INTERNAL "target_libs")
-
 if (NOT DEFINED GS_ONLY)
     install(TARGETS rpc)
 endif()
 
-list(APPEND TARGET_LIBS ${PROJECT_NAME})
+target_link_libraries(qbox-common INTERFACE ${PROJECT_NAME})
 
 if(NOT WITHOUT_QEMU)
     add_subdirectory(qemu-components)
