@@ -471,9 +471,8 @@ is the only way to stop it.
 
 ### Build the VP and firmware
 
-Both the `hello-qbox-vp` virtual-platform binary and the
-`hello.elf` firmware are built as part of the main Qbox build.
-From the Qbox root directory:
+First, build and install the main Qbox project. From the Qbox
+root directory:
 
 ```bash
 cmake -B build . \
@@ -488,6 +487,23 @@ the path to the AArch64 QEMU library (`libqemu-system-
 aarch64.so`). Without it, the VP fails at runtime with
 `target 'AArch64' disabled at compile time`.
 
+This installs the Qbox CMake package that the standalone example
+finds with `find_package(qbox)`.
+
+Then, from this directory, configure and build the standalone
+example against that install:
+
+```bash
+cmake -S . -B build -DCMAKE_PREFIX_PATH=<path-to-qbox-install-prefix>
+cmake --build build
+```
+
+`-DCMAKE_PREFIX_PATH` must point to the Qbox install prefix from
+the first step. For example, if you used `$(pwd)/build/install`
+above, it is `../../build/install` from this directory. The
+`hello-qbox-vp` binary is produced in this directory's `build/`
+subdirectory, not under the Qbox install tree.
+
 If `aarch64-linux-gnu-gcc` is on your `PATH`, the build also
 cross-compiles `hello.elf` into this directory's `build/`
 subdirectory, which is where `platform.lua` expects to find
@@ -496,16 +512,11 @@ printed and you can build the firmware manually (see below).
 
 ### Manual firmware build
 
-If you need to build the firmware separately (for example
-because the cross-compiler was not available during the Qbox
-build), run CMake from this directory:
-
-```bash
-cmake -B build .
-cmake --build build
-```
-
-Or compile directly with the cross-compiler:
+The example's CMake build produces both the VP and `hello.elf`
+together. If `aarch64-linux-gnu-gcc` was not on your `PATH` when
+you built the example, so `hello.elf` was not generated, use the
+cross-compiler command below to build only the firmware without
+reconfiguring or rebuilding the whole example:
 
 ```bash
 mkdir -p build
@@ -536,11 +547,10 @@ memory configured in `platform.lua`.
 
 ## Running Your Platform
 
-From the Qbox root directory:
+From this directory:
 
 ```bash
-./build/install/bin/examples/hello-qbox/hello-qbox-vp \
-    --gs_luafile examples/hello-qbox/platform.lua
+./build/hello-qbox-vp --gs_luafile platform.lua
 ```
 
 Expected output in your terminal:
@@ -559,13 +569,11 @@ the file:
 
 ```bash
 # Change log level
-./build/install/bin/examples/hello-qbox/hello-qbox-vp \
-    --gs_luafile examples/hello-qbox/platform.lua \
+./build/hello-qbox-vp --gs_luafile platform.lua \
     --param platform.log_level=4
 
 # Override the UART backend to a TCP socket instead of stdio
-./build/install/bin/examples/hello-qbox/hello-qbox-vp \
-    --gs_luafile examples/hello-qbox/platform.lua \
+./build/hello-qbox-vp --gs_luafile platform.lua \
     --param 'platform.pl011_uart_0.backend.address="127.0.0.1:4001"'
 
 # Then connect with: telnet localhost 4001
@@ -574,8 +582,7 @@ the file:
 To list all available parameters for a platform:
 
 ```bash
-./build/install/bin/examples/hello-qbox/hello-qbox-vp \
-    --gs_luafile examples/hello-qbox/platform.lua --debug-all
+./build/hello-qbox-vp --gs_luafile platform.lua --debug-all
 ```
 
 ---
@@ -597,15 +604,14 @@ platform.cpu_0 = {
 Or override it at runtime without editing the file:
 
 ```bash
-./build/install/bin/examples/hello-qbox/hello-qbox-vp \
-    --gs_luafile examples/hello-qbox/platform.lua \
+./build/hello-qbox-vp --gs_luafile platform.lua \
     --param platform.cpu_0.gdb_port=4321
 ```
 
 Connect from another terminal:
 
 ```bash
-aarch64-linux-gnu-gdb examples/hello-qbox/hello.elf
+aarch64-linux-gnu-gdb build/hello.elf
 (gdb) target remote localhost:4321
 (gdb) continue
 ```
@@ -617,8 +623,7 @@ To access the QEMU monitor (useful for inspecting device state,
 injecting interrupts, etc.):
 
 ```bash
-./build/install/bin/examples/hello-qbox/hello-qbox-vp \
-    --gs_luafile examples/hello-qbox/platform.lua \
+./build/hello-qbox-vp --gs_luafile platform.lua \
     --param \
     'platform.qemu_inst.qemu_args.-monitor="tcp:127.0.0.1:55555,server,nowait"'
 
