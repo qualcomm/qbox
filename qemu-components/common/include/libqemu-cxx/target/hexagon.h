@@ -27,6 +27,9 @@ public:
         v73_rev = 0x8c73,
         v79_rev = 0x8c79,
         v81_rev = 0x8781,
+        v85_rev = 0x8085,
+        v89_rev = 0xa289,
+        v91_rev = 0x8291,
     } Rev_t;
 
     static constexpr const char* const TYPE = "v67-hexagon-cpu";
@@ -40,7 +43,8 @@ public:
     static Rev_t parse_dsp_arch(const std::string arch_str)
     {
         static const std::unordered_map<std::string, Rev_t> DSP_REVS = { DSP_REV(v66), DSP_REV(v68), DSP_REV(v69),
-                                                                         DSP_REV(v73), DSP_REV(v79), DSP_REV(v81) };
+                                                                         DSP_REV(v73), DSP_REV(v79), DSP_REV(v81),
+                                                                         DSP_REV(v85), DSP_REV(v89), DSP_REV(v91) };
         auto rev = DSP_REVS.find(arch_str);
         Rev_t dsp_rev = unknown_rev;
         if (rev != DSP_REVS.end()) {
