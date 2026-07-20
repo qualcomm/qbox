@@ -39,7 +39,7 @@ else()
 endif()
 
 
-set(CMAKE_CXX_STANDARD 14 CACHE STRING "C++ standard to build all targets.")
+set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to build all targets.")
 set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "The with CMAKE_CXX_STANDARD selected C++ standard is a requirement.")
 set(GIT_BRANCH "main" CACHE STRING "Git branch from which to clone all gs repositoies")
 set(PKG_LOCK "package-lock.cmake" CACHE STRING "Package lock which will be used by the user")

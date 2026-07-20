@@ -590,7 +590,7 @@ cmake --build build --parallel
 
 ## C++ Standard
 
-QBox requires C++14 and is compatible with SystemC versions from
+QBox requires C++17 and is compatible with SystemC versions from
 SystemC 2.3.1a.
 
 ## Contributing
