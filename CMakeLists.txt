@@ -346,14 +346,10 @@ if (NOT WITHOUT_QEMU)
         $<INSTALL_INTERFACE:qemu-components/common/include>
     )
 
-    # Glib shim path (BUILD_INTERFACE only): shadows system glib for any
-    # in-tree TU that transitively includes qemu-plugin.h via libqemu's
-    # generated typedefs.h (which sits inside an extern "C" block in
-    # libqemu.h). Forward-decls of GArray/GByteArray are sufficient
-    # because qbox C++ never accesses glib internals.
     target_include_directories(
         ${PROJECT_NAME} BEFORE PUBLIC
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/qemu-components/common/include/glib_shim>
+        $<INSTALL_INTERFACE:qemu-components/common/include/glib_shim>
     )
 
     target_link_libraries(${PROJECT_NAME} PUBLIC libqemu::libqemu)
@@ -412,7 +408,6 @@ target_include_directories(
 
 target_link_libraries(${PROJECT_NAME} PUBLIC
         ${TARGET_LIBS}
-        PkgConfig::GLIB
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -421,6 +416,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         PkgConfig::LIBELF
         Threads::Threads
         PkgConfig::LIBZIP
+        PkgConfig::GLIB
         ${PYBIND11_EMBED}
         ${CMAKE_DL_LIBS}
 )
