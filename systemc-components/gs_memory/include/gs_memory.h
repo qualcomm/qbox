@@ -122,10 +122,15 @@ class gs_memory : public sc_core::sc_module
                 }
                 if (m_mem.p_shmem) {
                     std::stringstream shmname_stream;
+#if defined(_WIN32)
+                    DWORD pid = GetCurrentProcessId();
+#else
+                    pid_t pid = getpid();
+#endif
                     if (m_mem.p_shmem_prefix.get_value() != "")
-                        shmname_stream << "/" << m_mem.p_shmem_prefix.get_value() << std::hex << getpid();
+                        shmname_stream << "/" << m_mem.p_shmem_prefix.get_value() << std::hex << pid;
                     else
-                        shmname_stream << "/" << std::hex << getpid() << "-" << std::hex
+                        shmname_stream << "/" << std::hex << pid << "-" << std::hex
                                        << MemoryServices::get().get_shmem_seg_num();
                     if (shmname_stream.str().size() > 31) { /*PSHMNAMLEN in Mac OS*/
                         size_t hash = std::hash<std::string>{}(
