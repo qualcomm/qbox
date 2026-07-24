@@ -16,6 +16,9 @@ const char* get_target_name(Target t)
     case AARCH64:
         return "AArch64";
 
+    case ARM:
+        return "ARM (32-bit)";
+
     case RISCV64:
         return "RISC-V (64 bits)";
 
@@ -38,6 +41,10 @@ const char* get_target_name(Target t)
 
 #ifndef LIBQEMU_TARGET_aarch64_LIBRARY
 #define LIBQEMU_TARGET_aarch64_LIBRARY nullptr
+#endif
+
+#ifndef LIBQEMU_TARGET_arm_LIBRARY
+#define LIBQEMU_TARGET_arm_LIBRARY nullptr
 #endif
 
 #ifndef LIBQEMU_TARGET_riscv64_LIBRARY
@@ -65,6 +72,9 @@ const char* get_target_lib(Target t)
     switch (t) {
     case AARCH64:
         return LIBQEMU_TARGET_aarch64_LIBRARY;
+
+    case ARM:
+        return LIBQEMU_TARGET_arm_LIBRARY;
 
     case RISCV64:
         return LIBQEMU_TARGET_riscv64_LIBRARY;

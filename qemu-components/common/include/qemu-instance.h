@@ -292,6 +292,8 @@ protected:
     {
         if (s == "AARCH64") {
             return QemuInstance::Target::AARCH64;
+        } else if (s == "ARM") {
+            return QemuInstance::Target::ARM;
         } else if (s == "RISCV64") {
             return QemuInstance::Target::RISCV64;
         } else if (s == "RISCV32") {
