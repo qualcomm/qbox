@@ -17,4 +17,5 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" --title "Release ${{ github.ref_name }}" --generate-notes
+          REF_NAME: ${{ github.ref_name }}
+        run: gh release create "${REF_NAME}" --title "Release ${REF_NAME}" --generate-notes
