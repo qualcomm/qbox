@@ -43,7 +43,7 @@ public:
                                      .get_cci_value()
                                      .get_uint();
 
-        if (!m_gdb_port.is_default_value()) m_cpu.p_gdb_port = m_gdb_port;
+        if (!m_gdb_port.is_default_value()) m_qemu_inst.p_gdb_port = m_gdb_port;
 
         SCP_INFO(()) << "number of irqs  = " << m_irq_num;
 

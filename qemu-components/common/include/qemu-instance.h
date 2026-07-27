@@ -97,6 +97,10 @@ private:
 public:
     TargetSignalSocket<bool> reset;
 
+    /* TCP port for QEMU's GDB stub, 0 to disable. There is one stub per
+     * instance, presenting each of its vCPUs as a gdb thread. */
+    cci::cci_param<unsigned int> p_gdb_port;
+
     // these will be used by wait_for_work when it needs a global lock
     std::mutex g_signaled_lock;
     std::condition_variable g_signaled_cond;
@@ -186,10 +190,14 @@ protected:
 
         m_inst.push_qemu_arg("libqbox"); /* argv[0] */
         m_inst.push_qemu_arg({
-            "-M", "none",       /* no machine */
-            "-m", "0",       /* Guest memory is managed by gs_memory module */
-            "-monitor", "null", /* no monitor */
-            "-serial", "null",  /* no serial backend */
+            "-M",
+            "none", /* no machine */
+            "-m",
+            "0", /* Guest memory is managed by gs_memory module */
+            "-monitor",
+            "null", /* no monitor */
+            "-serial",
+            "null", /* no serial backend */
         });
 
         const char* args = "qemu_args."; /* Update documentations because it's not anymore 'args.' it's 'qemu_args.' */
@@ -327,6 +335,9 @@ public:
         , p_args("qemu_args", "", "additional space separated arguments")
         , p_accel("accel", "tcg", "Virtualization accelerator")
         , p_whpx_args("whpx_args", "", "Additional WHPX accelerator properties (e.g. gicd-base-address=0x17000000)")
+        , p_gdb_port("gdb_port", 0,
+                     "Wait for gdb connection on TCP port <gdb_port> (0 = disabled). One stub per QEMU "
+                     "instance; each vCPU of the instance appears as a gdb thread.")
         , p_time_sync_strategy("time_sync_strategy", "quantum_keeper",
                                "QEMU<->SystemC time synchronization strategy: \"quantum_keeper\" (default) uses the "
                                "traditional quantum keeper; \"mcips\" syncs time based on the number of instructions "
@@ -408,8 +419,8 @@ public:
      */
     void set_vnc_args(const std::string& vnc_options)
     {
-            m_inst.push_qemu_arg("-vnc");
-            m_inst.push_qemu_arg(vnc_options.c_str());
+        m_inst.push_qemu_arg("-vnc");
+        m_inst.push_qemu_arg(vnc_options.c_str());
     }
 
     /**
@@ -486,7 +497,8 @@ public:
 
         if (m_display_argument.empty()) {
             m_inst.push_qemu_arg({
-                "-display", "none", /* no GUI */
+                "-display",
+                "none", /* no GUI */
             });
         }
 
@@ -563,7 +575,30 @@ private:
             init(); // dlsyms libqemu_init; plugin functions are part of the returned LibQemuExports table.
         }
     }
-    void start_of_simulation(void) override { get().finish_qemu_init(); }
+    /* Start QEMU's gdbstub, if a port was configured.
+     *
+     * start_of_simulation, not end_of_elaboration: gdbserver_start() needs a
+     * *realized* CPU, and CPUs realize in QemuDevice::end_of_elaboration. It
+     * must also precede QemuCpu::start_of_simulation, which releases the vCPU,
+     * or "wait for gdb to connect" would not hold - the same instance-before-CPU
+     * order that finish_qemu_init() already relies on. */
+    void start_gdbstub_if_configured()
+    {
+        if (p_gdb_port.get_value() == 0) return;
+
+        /* Loopback only: a gdb stub is unauthenticated full control of the
+         * simulation. Tunnel in (ssh -L) to debug from another host. */
+        std::stringstream ss;
+        ss << "tcp:127.0.0.1:" << p_gdb_port.get_value();
+        SCP_INFO(()) << "Starting gdb server for this QEMU instance on TCP port " << p_gdb_port.get_value();
+        get().start_gdb_server(ss.str());
+    }
+
+    void start_of_simulation(void) override
+    {
+        start_gdbstub_if_configured();
+        get().finish_qemu_init();
+    }
 
     void reset_cb(const bool val)
     {

@@ -533,6 +533,8 @@ public:
         auto resetcb = std::bind(&QemuCpu::reset_cb, this, _1);
         reset.register_value_changed_cb(resetcb);
 
+        forward_deprecated_gdb_port();
+
         m_time_sync->on_construct();
         m_inst.add_dev(this);
 
@@ -639,6 +641,35 @@ public:
         m_cpu_hint_ext.set_cpu(m_cpu);
     }
 
+    /* Called from the constructor, so elaboration-time readers of the instance
+     * parameter see the forwarded value. */
+    void forward_deprecated_gdb_port()
+    {
+        if (p_gdb_port.is_default_value()) return;
+
+        std::ostringstream msg;
+        msg << name()
+            << ": gdb_port is deprecated on a CPU and should be set on the QEMU instance instead (there is one gdb "
+               "stub per instance, and each of its CPUs is a gdb thread). ";
+
+        cci::cci_param<unsigned int>& inst_port = m_inst.p_gdb_port;
+        if (inst_port.is_default_value()) {
+            msg << "Forwarding " << p_gdb_port.get_value() << " to " << m_inst.name() << ".gdb_port";
+            inst_port.set_value(p_gdb_port.get_value());
+        } else if (inst_port.get_value() == 0) {
+            /* gdb explicitly disabled on the instance: the non-deprecated
+             * setting wins. */
+            msg << "Ignoring " << p_gdb_port.get_value() << ", as gdb is explicitly disabled by " << m_inst.name()
+                << ".gdb_port = 0";
+        } else if (inst_port.get_value() != p_gdb_port.get_value()) {
+            /* Only one stub can exist, so keep what the instance already has. */
+            msg << "Keeping " << m_inst.name() << ".gdb_port = " << inst_port.get_value() << ", ignoring "
+                << p_gdb_port.get_value();
+        }
+
+        SC_REPORT_WARNING("/qbox/cpu/gdb_port", msg.str().c_str());
+    }
+
     void halt_cb(const bool& val)
     {
         SCP_TRACE(())("Halt : {}", val);
@@ -697,12 +728,6 @@ public:
     {
         QemuDevice::end_of_elaboration();
         m_time_sync->on_end_of_elaboration();
-        if (!p_gdb_port.is_default_value()) {
-            std::stringstream ss;
-            SCP_INFO(()) << "Starting gdb server on TCP port " << p_gdb_port;
-            ss << "tcp::" << p_gdb_port;
-            m_inst.get().start_gdb_server(ss.str());
-        }
     }
 
     virtual void start_of_simulation() override
