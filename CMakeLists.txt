@@ -394,18 +394,12 @@ target_include_directories(
     ${PROJECT_NAME} PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/systemc-components/common/include>
     $<INSTALL_INTERFACE:systemc-components/common/include>
-)
-
-# reg_model_maker.cc (compiled into the core qbox library) includes
-# <gs_memory.h>, <router.h> and <reg_router.h>, which live in their
-# respective component include dirs. These are only needed to build the
-# in-tree source, so BUILD_INTERFACE is sufficient (the header is consumed
-# externally only by the smmu* dymods, which already link these targets).
-target_include_directories(
-    ${PROJECT_NAME} PRIVATE
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/systemc-components/gs_memory/include>
+    $<INSTALL_INTERFACE:systemc-components/gs_memory/include>
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/systemc-components/router/include>
+    $<INSTALL_INTERFACE:systemc-components/router/include>
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/systemc-components/reg_router/include>
+    $<INSTALL_INTERFACE:systemc-components/reg_router/include>
 )
 
 target_link_libraries(${PROJECT_NAME} PUBLIC
