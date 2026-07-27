@@ -22,17 +22,17 @@ public:
     static constexpr qemu::Target ARCH = qemu::Target::AARCH64;
 
     cci::cci_param<bool> p_start_powered_off;
-    nvic_armv7m m_nvic;
+    nvic_armv7m& m_nvic;
     cci::cci_param<uint64_t> p_init_nsvtor;
     cci::cci_param<uint64_t> p_init_svtor;
     QemuTargetSignalSocket irq_in;
-    cpu_arm_cortexM55(const sc_core::sc_module_name& name, sc_core::sc_object* o)
-        : cpu_arm_cortexM55(name, *(dynamic_cast<QemuInstance*>(o)))
+    cpu_arm_cortexM55(const sc_core::sc_module_name& name, sc_core::sc_object* o, sc_core::sc_object* nvic)
+        : cpu_arm_cortexM55(name, *(dynamic_cast<QemuInstance*>(o)), *(dynamic_cast<nvic_armv7m*>(nvic)))
     {
     }
-    cpu_arm_cortexM55(sc_core::sc_module_name name, QemuInstance& inst)
+    cpu_arm_cortexM55(sc_core::sc_module_name name, QemuInstance& inst, nvic_armv7m& nvic)
         : QemuCpuArm(name, inst, "cortex-m55-arm")
-        , m_nvic("nvic", inst)
+        , m_nvic(nvic)
         , p_start_powered_off("start_powered_off", false,
                               "Start and reset the CPU "
                               "in powered-off state")

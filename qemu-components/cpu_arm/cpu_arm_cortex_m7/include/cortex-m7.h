@@ -21,16 +21,16 @@ class cpu_arm_cortexM7 : public QemuCpuArm
 {
 public:
     cci::cci_param<bool> p_start_powered_off;
-    nvic_armv7m m_nvic;
+    nvic_armv7m& m_nvic;
     cci::cci_param<uint64_t> p_init_nsvtor;
 
-    cpu_arm_cortexM7(const sc_core::sc_module_name& name, sc_core::sc_object* o)
-        : cpu_arm_cortexM7(name, *(dynamic_cast<QemuInstance*>(o)))
+    cpu_arm_cortexM7(const sc_core::sc_module_name& name, sc_core::sc_object* o, sc_core::sc_object* nvic)
+        : cpu_arm_cortexM7(name, *(dynamic_cast<QemuInstance*>(o)), *(dynamic_cast<nvic_armv7m*>(nvic)))
     {
     }
-    cpu_arm_cortexM7(sc_core::sc_module_name name, QemuInstance& inst)
+    cpu_arm_cortexM7(sc_core::sc_module_name name, QemuInstance& inst, nvic_armv7m& nvic)
         : QemuCpuArm(name, inst, "cortex-m7-arm")
-        , m_nvic("nvic", inst)
+        , m_nvic(nvic)
         , p_start_powered_off("start_powered_off", false,
                               "Start and reset the CPU "
                               "in powered-off state")

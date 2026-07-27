@@ -88,10 +88,10 @@ platform = {
             initiator_signals_num = 4,
             target_socket_0 = {address = 0x0, size = 0xE000E000, bind = "&cpu_0.router.initiator_socket"},
             target_socket_1 = {address = 0xE000E000 + 0x10000 , size = 0x100000, bind = "&cpu_0.router.initiator_socket"},
-            initiator_signal_socket_0 = {bind = "&cpu_0.cpu.nvic.irq_in_0"},
-            initiator_signal_socket_1 = {bind = "&cpu_0.cpu.nvic.irq_in_17"},
-            initiator_signal_socket_2 = {bind = "&cpu_0.cpu.nvic.nmi"},
-            initiator_signal_socket_3 = {bind = "&cpu_0.cpu.nvic.S_SysTick"},
+            initiator_signal_socket_0 = {bind = "&cpu_0.nvic.irq_in_0"},
+            initiator_signal_socket_1 = {bind = "&cpu_0.nvic.irq_in_17"},
+            initiator_signal_socket_2 = {bind = "&cpu_0.nvic.nmi"},
+            initiator_signal_socket_3 = {bind = "&cpu_0.nvic.S_SysTick"},
         },
 
         qemu_inst_mgr = {
@@ -107,9 +107,7 @@ platform = {
         cpu_0={
             moduletype = "RemoteCPU",
             args = {"&qemu_inst"},
-            cpu = {
-                nvic = { mem = { address = 0xE000E000, size = 0x10000}, num_irq = 64 },
-            },
+            nvic = { mem = { address = 0xE000E000, size = 0x10000}, num_irq = 64 },
         },
     },
     

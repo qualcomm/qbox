@@ -36,9 +36,10 @@ public:
         , m_gdb_port("gdb_port", 0, "GDB port")
         , m_qemu_inst(qemu_inst)
         , m_router("router")
-        , m_cpu("cpu", m_qemu_inst)
+        , m_nvic("nvic", m_qemu_inst)
+        , m_cpu("cpu", m_qemu_inst, m_nvic)
     {
-        unsigned int m_irq_num = m_broker.get_param_handle(std::string(this->name()) + ".cpu.nvic.num_irq")
+        unsigned int m_irq_num = m_broker.get_param_handle(std::string(this->name()) + ".nvic.num_irq")
                                      .get_cci_value()
                                      .get_uint();
 
@@ -46,7 +47,7 @@ public:
 
         SCP_INFO(()) << "number of irqs  = " << m_irq_num;
 
-        m_router.initiator_socket.bind(m_cpu.m_nvic.socket);
+        m_router.initiator_socket.bind(m_nvic.socket);
         m_cpu.socket.bind(m_router.target_socket);
     }
 
@@ -55,6 +56,7 @@ private:
     cci::cci_param<int> m_gdb_port;
     QemuInstance& m_qemu_inst;
     gs::router<> m_router;
+    nvic_armv7m m_nvic;
     cpu_arm_cortexM55 m_cpu;
 };
 GSC_MODULE_REGISTER(RemoteCPU, sc_core::sc_object*);
