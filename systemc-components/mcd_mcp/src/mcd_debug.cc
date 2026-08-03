@@ -11,7 +11,10 @@ namespace mcd {
 
 namespace {
 constexpr uint32_t k_max_records = 256;
-}
+/* A gdbstub target description runs to hundreds of registers, well past
+ * k_max_records, and each record is too large for a stack array of that many. */
+constexpr uint32_t k_max_regs = 4096;
+} // namespace
 
 Connection::Connection(const std::string& host, uint16_t port): m_client(nullptr), m_host(host), m_port(port)
 {
@@ -81,7 +84,7 @@ void Connection::populate()
             throw std::runtime_error("mcd: qry_mem_spaces failed");
         }
         for (uint32_t i = 0; i < num && i < tmp.size(); ++i) {
-            m_mem_spaces.push_back(MemSpace{ tmp[i].mem_space_id, tmp[i].mem_space_name });
+            m_mem_spaces.push_back(MemSpace{ tmp[i].mem_space_id, tmp[i].mem_space_name, tmp[i].mem_type });
         }
     }
 }
@@ -100,6 +103,29 @@ std::vector<BpInfo> Connection::list_breakpoints()
     return out;
 }
 
+std::vector<CoreState> Connection::core_states()
+{
+    std::array<mcd_core_state_st, k_max_records> tmp{};
+    uint32_t num = tmp.size();
+    if (mcd_client_qry_state(m_client, &num, tmp.data()) != 0) {
+        throw std::runtime_error("mcd: qry_state failed");
+    }
+    std::vector<CoreState> out;
+    for (uint32_t i = 0; i < num && i < tmp.size(); ++i) {
+        out.push_back(CoreState{ tmp[i].core_id, tmp[i].running != 0 });
+    }
+    return out;
+}
+
+void Connection::reset()
+{
+    if (mcd_client_reset(m_client) != 0) {
+        throw std::runtime_error("mcd: reset failed");
+    }
+    /* The server dropped its core list, so the cached topology is stale. */
+    populate();
+}
+
 const CoreInfo& Core::info() const
 {
     const auto& cores = m_conn.cores();
@@ -113,6 +139,13 @@ void Core::run()
 {
     if (mcd_client_run(m_conn.handle()) != 0) {
         throw std::runtime_error("mcd: run failed");
+    }
+}
+
+void Core::run_only()
+{
+    if (mcd_client_run_core(m_conn.handle(), m_idx) != 0) {
+        throw std::runtime_error("mcd: run of core " + std::to_string(m_idx) + " failed");
     }
 }
 
@@ -146,6 +179,27 @@ void Core::write_reg(uint32_t regno, uint64_t val)
     }
 }
 
+RegMap Core::registers(uint32_t group_id)
+{
+    std::vector<mcd_reg_group_st> gtmp(k_max_records);
+    std::vector<mcd_reg_info_st> tmp(k_max_regs);
+    uint32_t n_groups = static_cast<uint32_t>(gtmp.size());
+    uint32_t num = static_cast<uint32_t>(tmp.size());
+    if (mcd_client_qry_regs(m_conn.handle(), m_idx, group_id, &n_groups, gtmp.data(), &num, tmp.data()) != 0) {
+        throw std::runtime_error("mcd: qry_regs failed");
+    }
+    RegMap out;
+    for (uint32_t i = 0; i < n_groups && i < gtmp.size(); ++i) {
+        out.groups.push_back(RegGroup{ gtmp[i].group_id, gtmp[i].name, gtmp[i].n_registers });
+    }
+    for (uint32_t i = 0; i < num && i < tmp.size(); ++i) {
+        out.regs.push_back(RegInfo{ tmp[i].regnum, tmp[i].group_id, tmp[i].bitsize, tmp[i].reg_type,
+                                    tmp[i].hw_thread_id, tmp[i].address, tmp[i].mem_space_id, tmp[i].addr_space_id,
+                                    tmp[i].addr_space_type, tmp[i].name });
+    }
+    return out;
+}
+
 void Core::set_breakpoint(uint64_t addr, BpType type, uint32_t kind)
 {
     if (mcd_client_set_bp(m_conn.handle(), m_idx, static_cast<uint32_t>(type), addr, kind) != 0) {
@@ -169,19 +223,19 @@ StopEvent Core::wait_stop(uint32_t timeout_ms)
     return StopEvent{ st.stopped != 0, st.reason, st.watch_addr };
 }
 
-std::vector<uint8_t> Core::read_mem(uint64_t addr, uint32_t len, uint32_t space_id)
+std::vector<uint8_t> Core::read_mem(uint64_t addr, uint32_t len, uint32_t space_id, uint32_t addr_space_id)
 {
     std::vector<uint8_t> buf(len);
-    if (len && mcd_client_read_mem(m_conn.handle(), addr, len, space_id, buf.data()) != 0) {
+    if (len && mcd_client_read_mem(m_conn.handle(), addr, len, space_id, addr_space_id, buf.data()) != 0) {
         throw std::runtime_error("mcd: read_mem failed");
     }
     return buf;
 }
 
-void Core::write_mem(uint64_t addr, const std::vector<uint8_t>& data, uint32_t space_id)
+void Core::write_mem(uint64_t addr, const std::vector<uint8_t>& data, uint32_t space_id, uint32_t addr_space_id)
 {
-    if (!data.empty() &&
-        mcd_client_write_mem(m_conn.handle(), addr, static_cast<uint32_t>(data.size()), space_id, data.data()) != 0) {
+    if (!data.empty() && mcd_client_write_mem(m_conn.handle(), addr, static_cast<uint32_t>(data.size()), space_id,
+                                              addr_space_id, data.data()) != 0) {
         throw std::runtime_error("mcd: write_mem failed");
     }
 }

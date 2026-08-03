@@ -98,7 +98,7 @@ then `mcd_stop`, `mcd_read_reg`, `mcd_step`, `mcd_read_mem`, … to debug.
 | `mcd_status` | JSON summary of the connection and object model. |
 | `mcd_describe` | Human-readable topology table. |
 | `mcd_refresh` | Re-query the target's object model. |
-| `mcd_read_mem` / `mcd_write_mem` | Memory access (hex dump / hex byte string), optional `space_id`. |
+| `mcd_read_mem` / `mcd_write_mem` | Memory access (hex dump / hex byte string), optional `space_id` and `hw_thread`. The register space (`mem_type` `registers`) addresses registers by number, as MCD models them. |
 | `mcd_read_reg` / `mcd_write_reg` | Register access by GDB register number, optional `cpu_idx`. |
 | `mcd_regs_dump` | Dump a range of registers for a core. |
 | `mcd_run` / `mcd_stop` / `mcd_step` | Run control. |

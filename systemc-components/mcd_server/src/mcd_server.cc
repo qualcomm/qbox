@@ -8,6 +8,7 @@
 #include <module_factory_registery.h>
 #include <router_if.h>
 #include <cciutils.h>
+#include <cctype>
 #include <cstring>
 #include <cerrno>
 #include <cstdio>
@@ -97,6 +98,19 @@ static void put_u32(std::vector<uint8_t>& v, uint32_t x)
     v.push_back(static_cast<uint8_t>((x >> 8) & 0xff));
     v.push_back(static_cast<uint8_t>((x >> 16) & 0xff));
     v.push_back(static_cast<uint8_t>((x >> 24) & 0xff));
+}
+
+static void put_u64(std::vector<uint8_t>& v, uint64_t x)
+{
+    for (int i = 0; i < 8; ++i) {
+        v.push_back(static_cast<uint8_t>((x >> (8 * i)) & 0xff));
+    }
+}
+
+static void put_u16(std::vector<uint8_t>& v, uint16_t x)
+{
+    v.push_back(static_cast<uint8_t>(x & 0xff));
+    v.push_back(static_cast<uint8_t>((x >> 8) & 0xff));
 }
 
 static uint32_t get_u32(const uint8_t* p)
@@ -381,9 +395,66 @@ static uint32_t gdb_classify_stop(const std::string& pkt, uint64_t& watch_addr)
     return (sig == 5) ? MCD_STOP_BREAK : MCD_STOP_SIGNAL; /* 5 = SIGTRAP */
 }
 
+/* Value of attribute @p key inside the element text @p el, or "". The key must be
+ * a whole attribute name, so "num" does not match "regnum". */
+static std::string xml_attr(const std::string& el, const char* key)
+{
+    const std::string pat = std::string(key) + "=\"";
+    std::string::size_type pos = 0;
+    while ((pos = el.find(pat, pos)) != std::string::npos) {
+        bool at_start = (pos == 0);
+        bool preceded_by_space = !at_start && std::isspace(static_cast<unsigned char>(el[pos - 1]));
+        if (at_start || preceded_by_space) {
+            std::string::size_type beg = pos + pat.size();
+            std::string::size_type end = el.find('"', beg);
+            if (end == std::string::npos) return std::string();
+            return el.substr(beg, end - beg);
+        }
+        pos += pat.size();
+    }
+    return std::string();
+}
+
+/* Collect the annexes named by <xi:include href="..."/>: QEMU's target.xml lists
+ * its feature files rather than inlining them. */
+static void xml_includes(const std::string& xml, std::vector<std::string>& out, size_t cap)
+{
+    std::string::size_type pos = 0;
+    while (out.size() < cap && (pos = xml.find("href=\"", pos)) != std::string::npos) {
+        pos += 6;
+        std::string::size_type end = xml.find('"', pos);
+        if (end == std::string::npos) return;
+        std::string href = xml.substr(pos, end - pos);
+        if (!href.empty()) out.push_back(href);
+        pos = end + 1;
+    }
+}
+
+/* Collect the ids of the composite types a feature declares: <vector id="..."/>,
+ * <union id="...">, <struct id="...">. A <reg> whose type= names one of them is a
+ * compound register; anything else is one of gdb's primitive types. */
+static void xml_composite_types(const std::string& xml, std::vector<std::string>& out, size_t cap)
+{
+    static const char* const kinds[] = { "<vector ", "<union ", "<struct " };
+    for (const char* kind : kinds) {
+        std::string::size_type pos = 0;
+        while (out.size() < cap && (pos = xml.find(kind, pos)) != std::string::npos) {
+            std::string::size_type end = xml.find('>', pos);
+            if (end == std::string::npos) break;
+            std::string id = xml_attr(xml.substr(pos, end - pos), "id");
+            if (!id.empty()) out.push_back(id);
+            pos = end + 1;
+        }
+    }
+}
+
 mcd_server::mcd_server(const sc_core::sc_module_name& name)
     : sc_core::sc_module(name)
     , p_mcd_port("mcd_port", 1235, "MCD server TCP port")
+    , p_mcd_host("mcd_host", "127.0.0.1",
+                 "Interface to listen on: an address, or \"*\" for all interfaces. This port grants "
+                 "unauthenticated access to all memory and registers")
+    , p_wait_for_client("wait_for_client", false, "Wait for an MCD client to connect before starting the simulation")
     , m_listen_fd(INVALID_SOCK)
     , m_running(false)
     , m_client_fd(INVALID_SOCK)
@@ -435,6 +506,7 @@ void mcd_server::bind_instance(sc_core::sc_object* inst, const std::string& gdb_
     m_gdb_running.push_back(false);
     m_threads_known.push_back(false);
     m_last_stop.push_back(last_stop_t{});
+    m_inst_regs.push_back(inst_regs_t{});
     SCP_INFO(()) << "bind_instance[" << (m_insts.size() - 1) << "]: " << (inst ? inst->name() : "<null>")
                  << " gdb-rsp=" << gdb_hostport;
 }
@@ -468,6 +540,7 @@ socket_t mcd_server::gdb_session(uint32_t idx)
 
     m_gdb_fds[idx] = fd;
     m_gdb_running[idx] = false;
+    set_inst_cores_running(idx, false); /* a reopened session keeps its core entries */
     SCP_INFO(()) << "mcd_server: opened GDB-RSP session to " << m_gdb_ports[idx];
 
     gdb_enumerate_cores(idx);
@@ -533,11 +606,29 @@ void mcd_server::gdb_enumerate_cores(uint32_t idx)
         if (name.empty()) name = "core";
 
         m_cores.push_back(core_t{ idx, tid, name });
+        m_core_running.push_back(m_gdb_running[idx]);
         SCP_INFO(()) << "mcd_server: core " << (m_cores.size() - 1) << " = instance " << idx << " tid " << tid << " '"
                      << name << "'";
     }
 
     m_threads_known[idx] = true;
+}
+
+/* QEMU's vm_start/vm_stop cover every core of an instance, so a stop-reply or a
+ * global resume settles all of them at once. Caller must hold m_gdb_mutex. */
+void mcd_server::set_inst_cores_running(uint32_t inst, bool running)
+{
+    for (uint32_t i = 0; i < m_cores.size() && i < m_core_running.size(); ++i) {
+        if (m_cores[i].inst == inst) m_core_running[i] = running;
+    }
+}
+
+bool mcd_server::inst_all_cores_running(uint32_t inst)
+{
+    for (uint32_t i = 0; i < m_cores.size() && i < m_core_running.size(); ++i) {
+        if (m_cores[i].inst == inst && !m_core_running[i]) return false;
+    }
+    return true;
 }
 
 /* Open a session to every instance lacking one. Doing so pauses that instance,
@@ -550,11 +641,16 @@ void mcd_server::ensure_cores_known()
 
         bool was_open = (m_gdb_fds[idx] != INVALID_SOCK);
         if (gdb_session(idx) == INVALID_SOCK) continue;
+        /* An already-open session took the early return in gdb_session() and so
+         * never enumerated: a reset invalidates the core list without closing the
+         * session. The call is idempotent. */
+        gdb_enumerate_cores(idx);
         if (was_open) continue; /* already the debugger's session; leave its state alone */
 
         std::string reply;
         if (gdb_cmd(idx, "vCont;c", reply, /*wait_reply=*/false)) {
             m_gdb_running[idx] = true;
+            set_inst_cores_running(idx, true);
             SCP_DEBUG(()) << "mcd_server: resumed instance " << idx << " after core enumeration";
         }
     }
@@ -615,6 +711,7 @@ void mcd_server::gdb_close_all()
         std::string reply;
         if (gdb_cmd(idx, "vCont;c", reply, /*wait_reply=*/false)) {
             m_gdb_running[idx] = true;
+            set_inst_cores_running(idx, true);
             resumed_any = true;
             SCP_DEBUG(()) << "mcd_server: resumed instance " << idx << " on debugger detach";
         } else {
@@ -638,6 +735,7 @@ void mcd_server::gdb_close_all()
     /* Forget the discovered cores so a later client re-enumerates. Only a full
      * close resets this; a session dropped mid-use keeps its entry. */
     m_cores.clear();
+    m_core_running.clear();
     std::fill(m_threads_known.begin(), m_threads_known.end(), false);
     std::fill(m_last_stop.begin(), m_last_stop.end(), last_stop_t{});
 
@@ -659,6 +757,7 @@ bool mcd_server::gdb_cmd(uint32_t idx, const std::string& cmd, std::string& repl
     bool ok = gdb_txn(fd, cmd, reply, wait_reply, &stray);
     if (!stray.empty()) {
         m_gdb_running[idx] = false;
+        set_inst_cores_running(idx, false);
         SCP_INFO(()) << "mcd_server: instance " << idx << " reported a stop while '" << cmd << "' was in flight: '"
                      << stray << "'";
     }
@@ -667,6 +766,7 @@ bool mcd_server::gdb_cmd(uint32_t idx, const std::string& cmd, std::string& repl
     CLOSE_SOCKET(fd);
     m_gdb_fds[idx] = INVALID_SOCK;
     m_gdb_running[idx] = false;
+    set_inst_cores_running(idx, false);
     return false;
 }
 
@@ -674,6 +774,8 @@ void mcd_server::note_stop(uint32_t idx, uint32_t reason, uint64_t watch_addr, u
 {
     if (idx >= m_last_stop.size()) return;
     m_last_stop[idx] = last_stop_t{ true, reason, watch_addr, tid };
+    /* One core hit the breakpoint, but vm_stop halts the whole instance. */
+    set_inst_cores_running(idx, false);
 }
 
 /* Non-blocking check for an unsolicited stop-reply: a breakpoint hit becomes a
@@ -699,6 +801,7 @@ void mcd_server::drain_pending_stop(uint32_t idx)
         CLOSE_SOCKET(fd);
         m_gdb_fds[idx] = INVALID_SOCK;
         m_gdb_running[idx] = false;
+        set_inst_cores_running(idx, false);
         return;
     }
 
@@ -746,6 +849,7 @@ uint32_t mcd_server::gdb_wait_stop(uint32_t idx, uint32_t timeout_ms, uint64_t& 
         CLOSE_SOCKET(fd);
         m_gdb_fds[idx] = INVALID_SOCK;
         m_gdb_running[idx] = false;
+        set_inst_cores_running(idx, false);
         return MCD_STOP_HALTED;
     }
 
@@ -761,20 +865,21 @@ uint32_t mcd_server::gdb_wait_stop(uint32_t idx, uint32_t timeout_ms, uint64_t& 
     return reason;
 }
 
-void mcd_server::add_mem_space(uint32_t space_id, const std::string& name,
+void mcd_server::add_mem_space(uint32_t space_id, const std::string& name, uint32_t mem_type,
                                std::function<unsigned int(tlm::tlm_generic_payload&)> fn)
 {
     mcd_mem_space_st space;
     space.mem_space_id = space_id;
     std::memset(space.mem_space_name, 0, sizeof(space.mem_space_name));
     std::strncpy(space.mem_space_name, name.c_str(), sizeof(space.mem_space_name) - 1);
+    space.mem_type = mem_type;
     m_mem_spaces.push_back(space);
-    m_transactors[space_id] = std::move(fn);
+    if (fn) m_transactors[space_id] = std::move(fn);
 }
 
 void mcd_server::bind_target(tlm::tlm_initiator_socket<>* socket, uint32_t space_id, const std::string& name)
 {
-    add_mem_space(space_id, name,
+    add_mem_space(space_id, name, MCD_MEM_SPACE_DEFAULT,
                   [socket](tlm::tlm_generic_payload& txn) -> unsigned int { return (*socket)->transport_dbg(txn); });
     SCP_INFO(()) << "bind_target: initiator socket registered for space id=" << space_id << " name='" << name << "'";
 }
@@ -802,7 +907,7 @@ void mcd_server::before_end_of_elaboration()
 
         /* Issue transport_dbg directly on the target socket's export: no extra
          * initiator socket, and no elaboration-time bind. */
-        add_mem_space(space_id, space_name, [ts](tlm::tlm_generic_payload& txn) -> unsigned int {
+        add_mem_space(space_id, space_name, MCD_MEM_SPACE_DEFAULT, [ts](tlm::tlm_generic_payload& txn) -> unsigned int {
             return ts->get_base_export()->transport_dbg(txn);
         });
 
@@ -886,6 +991,11 @@ void mcd_server::before_end_of_elaboration()
             bind_instance(sc_obj, "127.0.0.1:" + std::to_string(port));
         }
     }
+
+    /* The register space, last so the router space ids are unaffected. It has no
+     * transactor: registers are not reachable through TLM, only over the RSP
+     * session, so READ_MEM/WRITE_MEM special-case this id. */
+    add_mem_space(MCD_REG_SPACE_ID, "registers", MCD_MEM_SPACE_IS_REGISTERS, nullptr);
 }
 
 void mcd_server::end_of_elaboration()
@@ -894,6 +1004,25 @@ void mcd_server::end_of_elaboration()
         SCP_INFO(()) << "Starting MCD server on TCP port " << p_mcd_port.get_value();
         start_server();
     }
+}
+
+/* Optionally hold the simulation at time 0 until a debugger is attached, so
+ * nothing is missed. The accept loop runs on m_thread and publishes m_client_fd,
+ * so this only has to wait for it. */
+void mcd_server::start_of_simulation()
+{
+    if (!p_wait_for_client.get_value()) return;
+    if (m_listen_fd == INVALID_SOCK) {
+        SCP_WARN(()) << "mcd_server: wait_for_client set but the server is not listening; not waiting";
+        return;
+    }
+
+    SCP_WARN(()) << "mcd_server: waiting for an MCD client on " << p_mcd_host.get_value() << ":"
+                 << p_mcd_port.get_value() << " before starting the simulation";
+    while (m_running && m_client_fd == INVALID_SOCK) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    SCP_INFO(()) << "mcd_server: client connected, starting the simulation";
 }
 
 void mcd_server::start_server()
@@ -909,16 +1038,34 @@ void mcd_server::start_server()
 
     set_nosigpipe(m_listen_fd);
 
-    /* Loopback only, never INADDR_ANY: this port grants unauthenticated read/write
-     * access to all simulated memory and registers. Remote debuggers tunnel in. */
+    /* Loopback by default; mcd_host opts in to a wider interface. The port grants
+     * unauthenticated read/write access to all memory and registers, so anything
+     * other than loopback is announced loudly. */
+    const std::string host = p_mcd_host.get_value();
     struct sockaddr_in addr;
     std::memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     addr.sin_port = htons(static_cast<uint16_t>(p_mcd_port.get_value()));
 
+    if (host.empty() || host == "*" || host == "0.0.0.0") {
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        /* SC_REPORT_WARNING, not SCP_WARN: this must be visible at the default
+         * log_level of 0. */
+        auto prev = sc_core::sc_report_handler::set_actions(sc_core::SC_WARNING, sc_core::SC_LOG | sc_core::SC_DISPLAY);
+        SC_REPORT_WARNING("mcd_server", (std::string(name()) + " is listening on ALL interfaces: port " +
+                                         std::to_string(p_mcd_port.get_value()) +
+                                         " is unauthenticated access to all memory and registers")
+                                            .c_str());
+        sc_core::sc_report_handler::set_actions(sc_core::SC_WARNING, prev);
+    } else if (::inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1) {
+        SCP_ERR(()) << "mcd_server: mcd_host \"" << host << "\" is not an IPv4 address or \"*\"";
+        CLOSE_SOCKET(m_listen_fd);
+        m_listen_fd = INVALID_SOCK;
+        return;
+    }
+
     if (::bind(m_listen_fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
-        SCP_ERR(()) << "mcd_server: bind() failed on port " << p_mcd_port.get_value() << ": " << sock_err();
+        SCP_ERR(()) << "mcd_server: bind() failed on " << host << ":" << p_mcd_port.get_value() << ": " << sock_err();
         CLOSE_SOCKET(m_listen_fd);
         m_listen_fd = INVALID_SOCK;
         return;
@@ -1052,10 +1199,16 @@ mcd_return_et mcd_server::dispatch(uint8_t opcode, const std::vector<uint8_t>& r
         return op_stop(req, resp);
     case MCD_OP_STEP:
         return op_step(req, resp);
+    case MCD_OP_QRY_STATE:
+        return op_qry_state(req, resp);
+    case MCD_OP_RESET:
+        return op_reset(req, resp);
     case MCD_OP_READ_REG:
         return op_read_reg(req, resp);
     case MCD_OP_WRITE_REG:
         return op_write_reg(req, resp);
+    case MCD_OP_QRY_REGS:
+        return op_qry_regs(req, resp);
     case MCD_OP_SET_BP:
         return op_set_bp(req, resp);
     case MCD_OP_CLR_BP:
@@ -1209,10 +1362,12 @@ mcd_return_et mcd_server::op_qry_cores(const std::vector<uint8_t>&, std::vector<
 mcd_return_et mcd_server::op_qry_mem_spaces(const std::vector<uint8_t>&, std::vector<uint8_t>& resp)
 {
     /* Response payload: 4-byte LE count, then for each space a 4-byte LE
-     * mem_space_id followed by the fixed 64-byte mem_space_name. */
+     * mem_space_id, a 4-byte LE mem_type (MCD_MEM_SPACE_*), and the fixed 64-byte
+     * mem_space_name. */
     put_u32(resp, static_cast<uint32_t>(m_mem_spaces.size()));
     for (const mcd_mem_space_st& space : m_mem_spaces) {
         put_u32(resp, space.mem_space_id);
+        put_u32(resp, space.mem_type);
         resp.insert(resp.end(), space.mem_space_name, space.mem_space_name + sizeof(space.mem_space_name));
     }
     return MCD_RET_ACT_NONE;
@@ -1220,17 +1375,27 @@ mcd_return_et mcd_server::op_qry_mem_spaces(const std::vector<uint8_t>&, std::ve
 
 mcd_return_et mcd_server::op_read_mem(const std::vector<uint8_t>& req, std::vector<uint8_t>& resp)
 {
-    /* Request: addr u64, length u32, optional space_id u32. A 12-byte payload
-     * (no space_id) means space 0, "physical". */
+    /* Request: addr u64, length u32, optional space_id u32, optional addr_space_id
+     * u32. A 12-byte payload (no space_id) means space 0, "physical"; an absent or
+     * zero addr_space_id means core 0's hw thread. */
     if (req.size() < 12) return MCD_RET_ERR_GENERAL;
 
     uint64_t addr = get_u64(&req[0]);
     uint32_t length = get_u32(&req[8]);
     uint32_t space_id = (req.size() >= 16) ? get_u32(&req[12]) : 0u;
+    uint32_t addr_space_id = (req.size() >= 20) ? get_u32(&req[16]) : 0u;
 
     if (length > MCD_MAX_FRAME) {
         SCP_WARN(()) << "mcd_server: read_mem length " << length << " exceeds the " << MCD_MAX_FRAME << "-byte limit";
         return MCD_RET_ERR_GENERAL;
+    }
+
+    /* Registers have no transactor, so this must precede the lookup. */
+    if (space_id == MCD_REG_SPACE_ID) {
+        std::vector<uint8_t> data;
+        mcd_return_et rc = access_reg_space(/*write=*/false, addr, length, addr_space_id, data);
+        if (rc == MCD_RET_ACT_NONE) resp.insert(resp.end(), data.begin(), data.end());
+        return rc;
     }
 
     auto it = m_transactors.find(space_id);
@@ -1273,9 +1438,10 @@ mcd_return_et mcd_server::op_read_mem(const std::vector<uint8_t>& req, std::vect
 
 mcd_return_et mcd_server::op_write_mem(const std::vector<uint8_t>& req, std::vector<uint8_t>& resp)
 {
-    /* Request: addr u64, length u32, optional space_id u32, then <length> data
-     * bytes. Header size (16 or 12 bytes, the latter meaning space 0) is inferred
-     * from the total payload. */
+    /* Request: addr u64, length u32, optional space_id u32, optional addr_space_id
+     * u32, then <length> data bytes. Header size (20, 16 or 12 bytes; 12 meaning
+     * space 0) is inferred from the total payload, as is a zero addr_space_id,
+     * which means core 0's hw thread. */
     (void)resp;
     if (req.size() < 12) return MCD_RET_ERR_GENERAL;
 
@@ -1291,8 +1457,13 @@ mcd_return_et mcd_server::op_write_mem(const std::vector<uint8_t>& req, std::vec
      * sum compares as satisfied, selecting a data offset past the buffer end. */
     const uint64_t len64 = length;
     uint32_t space_id;
+    uint32_t addr_space_id = 0;
     std::vector<uint8_t>::size_type data_off;
-    if (static_cast<uint64_t>(req.size()) >= 16u + len64) {
+    if (static_cast<uint64_t>(req.size()) >= 20u + len64) {
+        space_id = get_u32(&req[12]);
+        addr_space_id = get_u32(&req[16]);
+        data_off = 20;
+    } else if (static_cast<uint64_t>(req.size()) >= 16u + len64) {
         space_id = get_u32(&req[12]);
         data_off = 16;
     } else if (static_cast<uint64_t>(req.size()) >= 12u + len64) {
@@ -1300,6 +1471,12 @@ mcd_return_et mcd_server::op_write_mem(const std::vector<uint8_t>& req, std::vec
         data_off = 12;
     } else {
         return MCD_RET_ERR_GENERAL;
+    }
+
+    /* Registers have no transactor, so this must precede the lookup. */
+    if (space_id == MCD_REG_SPACE_ID) {
+        std::vector<uint8_t> data(req.begin() + data_off, req.begin() + data_off + length);
+        return access_reg_space(/*write=*/true, addr, length, addr_space_id, data);
     }
 
     auto it = m_transactors.find(space_id);
@@ -1388,35 +1565,96 @@ bool mcd_server::resume_observed()
     return false;
 }
 
-mcd_return_et mcd_server::op_run(const std::vector<uint8_t>&, std::vector<uint8_t>&)
+mcd_return_et mcd_server::op_run(const std::vector<uint8_t>& req, std::vector<uint8_t>&)
 {
     if (m_gdb_ports.empty()) {
         SCP_WARN(()) << "mcd_server: RUN with no GDB-RSP endpoint";
         return MCD_RET_ERR_GENERAL;
     }
 
+    /* Request: optional core id u32. An empty payload, or MCD_RUN_ALL_CORES,
+     * resumes every core of every instance. */
+    static const uint32_t MCD_RUN_ALL_CORES = 0xffffffffu;
+    uint32_t core = (req.size() >= 4) ? get_u32(&req[0]) : MCD_RUN_ALL_CORES;
+
     std::lock_guard<std::mutex> lock(m_gdb_mutex);
     bool all_ok = true;
     bool resumed_any = false;
-    /* Run is per instance: continue is a global vm_start(), so one 'c' resumes
-     * every core of the instance. */
-    for (uint32_t idx = 0; idx < m_gdb_ports.size(); ++idx) {
-        /* m_gdb_running is only what we last told the instance, so drain any
-         * pending stop-reply before deciding it is already running. */
-        drain_pending_stop(idx);
 
-        if (m_gdb_running[idx]) continue; /* already running */
-
-        /* Read only the '+' ack: the stop-reply arrives only on the next stop. */
-        std::string reply;
-        if (!gdb_cmd(idx, "c", reply, /*wait_reply=*/false)) {
-            SCP_WARN(()) << "mcd_server: RUN forward to " << m_gdb_ports[idx] << " failed";
-            all_ok = false;
-            continue;
+    if (core != MCD_RUN_ALL_CORES) {
+        ensure_cores_known();
+        if (core >= m_cores.size()) {
+            SCP_WARN(()) << "mcd_server: RUN core id " << core << " out of range";
+            return MCD_RET_ERR_GENERAL;
         }
-        m_gdb_running[idx] = true;
-        resumed_any = true;
-        SCP_INFO(()) << "mcd_server: RUN -> gdb 'c' @" << m_gdb_ports[idx];
+        uint32_t inst = m_cores[core].inst;
+        drain_pending_stop(inst);
+
+        /* One vCont names the whole set that should end up running, so the cores
+         * a previous per-core RUN resumed keep going. Snapshot it before the halt
+         * below, which clears the run state. */
+        std::vector<uint32_t> wanted;
+        for (uint32_t i = 0; i < m_cores.size(); ++i) {
+            if (m_cores[i].inst != inst) continue;
+            if (i == core || m_core_running[i]) wanted.push_back(i);
+        }
+
+        /* The stub parses nothing while the VM runs, so a core can only be added
+         * to a partly-running instance by interrupting it first. */
+        bool ready = !m_gdb_running[inst] || gdb_halt(inst);
+
+        /* "vCont;c:<tid>..." resumes exactly the cores named: gdb_continue_partial
+         * leaves every other CPU halted. */
+        std::string cmd = "vCont";
+        for (uint32_t i : wanted) {
+            char t[16];
+            std::snprintf(t, sizeof(t), ";c:%x", m_cores[i].tid);
+            cmd += t;
+        }
+
+        std::string reply;
+        if (!ready || !gdb_cmd(inst, cmd, reply, /*wait_reply=*/false)) {
+            SCP_WARN(()) << "mcd_server: RUN forward to " << m_gdb_ports[inst] << " failed";
+            all_ok = false;
+        } else {
+            m_gdb_running[inst] = true;
+            for (uint32_t i : wanted) m_core_running[i] = true;
+            resumed_any = true;
+            SCP_INFO(()) << "mcd_server: RUN core=" << core << " -> '" << cmd << "' @" << m_gdb_ports[inst];
+        }
+    } else {
+        /* Run is per instance: continue is a global vm_start(), so one 'c' resumes
+         * every core of the instance. */
+        for (uint32_t idx = 0; idx < m_gdb_ports.size(); ++idx) {
+            /* m_gdb_running is only what we last told the instance, so drain any
+             * pending stop-reply before deciding it is already running. */
+            drain_pending_stop(idx);
+
+            if (m_gdb_running[idx]) {
+                if (inst_all_cores_running(idx)) continue; /* already running */
+                /* Running with a core still halted: a per-core RUN resumed only
+                 * part of the instance, and the stub will not read a packet until
+                 * the VM is interrupted. */
+                if (!gdb_halt(idx)) {
+                    SCP_WARN(()) << "mcd_server: RUN could not interrupt " << m_gdb_ports[idx]
+                                 << " to resume its halted cores";
+                    all_ok = false;
+                    continue;
+                }
+            }
+
+            /* Read only the '+' ack: the stop-reply arrives only on the next stop. */
+            std::string reply;
+            if (!gdb_cmd(idx, "c", reply, /*wait_reply=*/false)) {
+                SCP_WARN(()) << "mcd_server: RUN forward to " << m_gdb_ports[idx] << " failed";
+                all_ok = false;
+                continue;
+            }
+            m_gdb_running[idx] = true;
+            set_inst_cores_running(idx, true);
+            resumed_any = true;
+            SCP_INFO(()) << "mcd_server: RUN -> gdb 'c' @" << m_gdb_ports[idx];
+        }
     }
 
     /* Deciding whether to drop the hold needs the resume to have taken effect:
@@ -1470,6 +1708,7 @@ mcd_return_et mcd_server::op_stop(const std::vector<uint8_t>&, std::vector<uint8
             continue;
         }
         m_gdb_running[idx] = false;
+        set_inst_cores_running(idx, false);
         SCP_INFO(()) << "mcd_server: STOP -> gdb 0x03 @" << m_gdb_ports[idx] << " reply='" << reply << "'";
     }
     return all_ok ? MCD_RET_ACT_NONE : MCD_RET_ERR_GENERAL;
@@ -1494,6 +1733,10 @@ mcd_return_et mcd_server::op_step(const std::vector<uint8_t>& req, std::vector<u
     }
     uint32_t inst = m_cores[core].inst;
 
+    /* The stub answers nothing while the VM runs; halt for the duration. */
+    scoped_halt halt(*this, inst);
+    halt.exclude(core); /* a stepped core stays halted */
+
     /* "vCont;s:<tid>" steps exactly one core, leaving the others halted:
      * gdb_continue_partial resumes only the CPUs named. A bare 's' would step
      * whichever core the stub has selected. */
@@ -1513,10 +1756,189 @@ mcd_return_et mcd_server::op_step(const std::vector<uint8_t>& req, std::vector<u
     /* Stepping briefly resumes the instance (vm_prepare_start); it is halted
      * again once the step completes. */
     m_gdb_running[inst] = false;
+    m_core_running[core] = false;
     update_debug_hold();
     SCP_INFO(()) << "mcd_server: STEP core=" << core << " -> '" << cmd << "' @" << m_gdb_ports[inst] << " reply='"
                  << reply << "'";
     return MCD_RET_ACT_NONE;
+}
+
+mcd_return_et mcd_server::op_qry_state(const std::vector<uint8_t>&, std::vector<uint8_t>& resp)
+{
+    /* Response: 4-byte LE count, then each core as [core_id u32][running u8]. */
+    std::lock_guard<std::mutex> lock(m_gdb_mutex);
+    ensure_cores_known();
+
+    /* A breakpoint hit is a stop-reply nobody has collected yet, so poll for one
+     * rather than report the core as still running. This never waits. */
+    for (uint32_t idx = 0; idx < m_gdb_fds.size(); ++idx) {
+        drain_pending_stop(idx);
+    }
+
+    put_u32(resp, static_cast<uint32_t>(m_cores.size()));
+    for (uint32_t i = 0; i < m_cores.size(); ++i) {
+        put_u32(resp, i);
+        resp.push_back((i < m_core_running.size() && m_core_running[i]) ? 1u : 0u);
+    }
+    return MCD_RET_ACT_NONE;
+}
+
+/* Run @p command through the stub's HMP monitor: gdbserver_start wires one up, so
+ * "qRcmd,<hex>" is the only reset QEMU's gdbstub offers (there is no bare 'R').
+ * Caller must hold m_gdb_mutex. */
+bool mcd_server::gdb_monitor(uint32_t idx, const std::string& command)
+{
+    std::string cmd = "qRcmd,";
+    for (unsigned char ch : command) {
+        char b[3];
+        std::snprintf(b, sizeof(b), "%02x", ch);
+        cmd += b;
+    }
+
+    std::string reply;
+    if (!gdb_cmd(idx, cmd, reply)) return false;
+
+    /* Console output arrives first as "O<hex>" packets; the result follows. The
+     * loop is bounded so a chatty command cannot hold the session here. */
+    for (int skipped = 0; skipped < 64; ++skipped) {
+        if (reply.size() < 2 || reply[0] != 'O' || reply == "OK") break;
+        if (!gdb_read_packet(m_gdb_fds[idx], reply)) return false;
+    }
+    /* "OK", an empty packet (unsupported) and console output are all accepted;
+     * only "E xx" is a refusal. */
+    if (!reply.empty() && reply[0] == 'E') {
+        SCP_WARN(()) << "mcd_server: monitor '" << command << "' rejected by " << m_gdb_ports[idx] << ": '" << reply
+                     << "'";
+        return false;
+    }
+    return true;
+}
+
+mcd_return_et mcd_server::op_reset(const std::vector<uint8_t>&, std::vector<uint8_t>&)
+{
+    if (m_gdb_ports.empty()) {
+        SCP_WARN(()) << "mcd_server: RESET with no GDB-RSP endpoint";
+        return MCD_RET_ERR_GENERAL;
+    }
+
+    std::lock_guard<std::mutex> lock(m_gdb_mutex);
+
+    bool all_ok = true;
+    for (uint32_t idx = 0; idx < m_gdb_ports.size(); ++idx) {
+        if (gdb_session(idx) == INVALID_SOCK) {
+            all_ok = false;
+            continue;
+        }
+        /* The command is a packet like any other, so the instance must be halted
+         * for the stub to read it. It is left halted: the CPUs have just been
+         * reset, which is the state a debugger wants to inspect, and the client
+         * resumes with RUN when it is ready. */
+        gdb_halt(idx);
+        if (!gdb_monitor(idx, "system_reset")) {
+            SCP_WARN(()) << "mcd_server: RESET forward to " << m_gdb_ports[idx] << " failed";
+            all_ok = false;
+            continue;
+        }
+        SCP_INFO(()) << "mcd_server: RESET -> monitor 'system_reset' @" << m_gdb_ports[idx];
+    }
+
+    /* The reset re-creates the CPUs' state and may change the register layout, so
+     * drop everything discovered from the stub; the next query re-enumerates. The
+     * sessions stay open, so ensure_cores_known() enumerates on them again. */
+    m_cores.clear();
+    m_core_running.clear();
+    std::fill(m_threads_known.begin(), m_threads_known.end(), false);
+    std::fill(m_last_stop.begin(), m_last_stop.end(), last_stop_t{});
+    for (inst_regs_t& d : m_inst_regs) d = inst_regs_t{};
+
+    update_debug_hold();
+    return all_ok ? MCD_RET_ACT_NONE : MCD_RET_ERR_GENERAL;
+}
+
+/* Read one register with 'p'. Caller must hold m_gdb_mutex and keep the instance
+ * halted: the stub answers nothing while the VM runs. */
+bool mcd_server::gdb_read_reg(uint32_t core, uint32_t regno, std::vector<uint8_t>& value)
+{
+    if (core >= m_cores.size()) return false;
+    uint32_t inst = m_cores[core].inst;
+
+    /* 'p' reads from the currently selected core (gdbserver_state.g_cpu), so
+     * without this every core of an instance aliases the same registers. */
+    if (!gdb_select_core(core)) {
+        SCP_WARN(()) << "mcd_server: READ_REG could not select core " << core;
+        return false;
+    }
+
+    char cmd[32];
+    std::snprintf(cmd, sizeof(cmd), "p%x", regno);
+
+    std::string reply;
+    if (!gdb_cmd(inst, cmd, reply)) {
+        SCP_WARN(()) << "mcd_server: READ_REG forward to " << m_gdb_ports[inst] << " failed";
+        return false;
+    }
+    /* Empty reply => 'p' unsupported; "E xx" => error. */
+    if (reply.empty() || reply[0] == 'E') {
+        SCP_WARN(()) << "mcd_server: READ_REG regno=" << regno << " gdb error '" << reply << "'";
+        return false;
+    }
+    if (reply.size() % 2 != 0) {
+        SCP_WARN(()) << "mcd_server: READ_REG odd-length hex reply '" << reply << "'";
+        return false;
+    }
+
+    /* Reply is the value hex-encoded in target byte order; decode preserving
+     * that order. */
+    value.clear();
+    for (std::string::size_type i = 0; i + 1 < reply.size(); i += 2) {
+        int hi = hex_nibble(reply[i]);
+        int lo = hex_nibble(reply[i + 1]);
+        if (hi < 0 || lo < 0) {
+            SCP_WARN(()) << "mcd_server: READ_REG bad hex reply '" << reply << "'";
+            return false;
+        }
+        value.push_back(static_cast<uint8_t>((hi << 4) | lo));
+    }
+    return true;
+}
+
+/* Write one register with 'P'. Same preconditions as gdb_read_reg(). */
+bool mcd_server::gdb_write_reg(uint32_t core, uint32_t regno, const uint8_t* value, uint32_t len)
+{
+    if (core >= m_cores.size()) return false;
+    uint32_t inst = m_cores[core].inst;
+
+    /* 'P' writes to the currently selected core, so select it first. */
+    if (!gdb_select_core(core)) {
+        SCP_WARN(()) << "mcd_server: WRITE_REG could not select core " << core;
+        return false;
+    }
+
+    /* "P<regno>=<hex-value>", hex-encoded in the given byte order. */
+    std::string cmd = "P";
+    {
+        char rn[16];
+        std::snprintf(rn, sizeof(rn), "%x", regno);
+        cmd += rn;
+    }
+    cmd += '=';
+    for (uint32_t i = 0; i < len; ++i) {
+        char b[3];
+        std::snprintf(b, sizeof(b), "%02x", value[i]);
+        cmd += b;
+    }
+
+    std::string reply;
+    if (!gdb_cmd(inst, cmd, reply)) {
+        SCP_WARN(()) << "mcd_server: WRITE_REG forward to " << m_gdb_ports[inst] << " failed";
+        return false;
+    }
+    if (reply != "OK") {
+        SCP_WARN(()) << "mcd_server: WRITE_REG regno=" << regno << " gdb reply '" << reply << "'";
+        return false;
+    }
+    SCP_INFO(()) << "mcd_server: WRITE_REG regno=" << regno << " OK";
+    return true;
 }
 
 mcd_return_et mcd_server::op_read_reg(const std::vector<uint8_t>& req, std::vector<uint8_t>& resp)
@@ -1533,44 +1955,13 @@ mcd_return_et mcd_server::op_read_reg(const std::vector<uint8_t>& req, std::vect
         SCP_WARN(()) << "mcd_server: READ_REG core id " << core << " out of range";
         return MCD_RET_ERR_GENERAL;
     }
-    uint32_t inst = m_cores[core].inst;
 
-    /* 'p' reads from the currently selected core (gdbserver_state.g_cpu), so
-     * without this every core of an instance aliases the same registers. */
-    if (!gdb_select_core(core)) {
-        SCP_WARN(()) << "mcd_server: READ_REG could not select core " << core;
-        return MCD_RET_ERR_GENERAL;
-    }
+    /* The stub answers nothing while the VM runs; halt for the duration. */
+    scoped_halt halt(*this, m_cores[core].inst);
 
-    char cmd[32];
-    std::snprintf(cmd, sizeof(cmd), "p%x", regno);
-
-    std::string reply;
-    if (!gdb_cmd(inst, cmd, reply)) {
-        SCP_WARN(()) << "mcd_server: READ_REG forward to " << m_gdb_ports[inst] << " failed";
-        return MCD_RET_ERR_GENERAL;
-    }
-    /* Empty reply => 'p' unsupported; "E xx" => error. */
-    if (reply.empty() || reply[0] == 'E') {
-        SCP_WARN(()) << "mcd_server: READ_REG regno=" << regno << " gdb error '" << reply << "'";
-        return MCD_RET_ERR_GENERAL;
-    }
-    if (reply.size() % 2 != 0) {
-        SCP_WARN(()) << "mcd_server: READ_REG odd-length hex reply '" << reply << "'";
-        return MCD_RET_ERR_GENERAL;
-    }
-
-    /* Reply is the value hex-encoded in target byte order; decode preserving
-     * that order. */
-    for (std::string::size_type i = 0; i + 1 < reply.size(); i += 2) {
-        int hi = hex_nibble(reply[i]);
-        int lo = hex_nibble(reply[i + 1]);
-        if (hi < 0 || lo < 0) {
-            SCP_WARN(()) << "mcd_server: READ_REG bad hex reply '" << reply << "'";
-            return MCD_RET_ERR_GENERAL;
-        }
-        resp.push_back(static_cast<uint8_t>((hi << 4) | lo));
-    }
+    std::vector<uint8_t> value;
+    if (!gdb_read_reg(core, regno, value)) return MCD_RET_ERR_GENERAL;
+    resp.insert(resp.end(), value.begin(), value.end());
     return MCD_RET_ACT_NONE;
 }
 
@@ -1588,39 +1979,388 @@ mcd_return_et mcd_server::op_write_reg(const std::vector<uint8_t>& req, std::vec
         SCP_WARN(()) << "mcd_server: WRITE_REG core id " << core << " out of range";
         return MCD_RET_ERR_GENERAL;
     }
+
+    /* The stub answers nothing while the VM runs; halt for the duration. */
+    scoped_halt halt(*this, m_cores[core].inst);
+
+    if (!gdb_write_reg(core, regno, req.data() + 8, static_cast<uint32_t>(req.size() - 8))) {
+        return MCD_RET_ERR_GENERAL;
+    }
+    return MCD_RET_ACT_NONE;
+}
+
+/* MCD addresses a register that is not memory mapped as memory in a space of type
+ * MCD_MEM_SPACE_IS_REGISTERS: the address is the register number and the hw thread
+ * it is valid in is the addr_space_id. The bytes on the wire are the register
+ * values in target byte order, exactly what READ_REG/WRITE_REG carry, so a client
+ * sees the same bytes through either path. */
+mcd_return_et mcd_server::access_reg_space(bool write, uint64_t address, uint32_t length, uint32_t addr_space_id,
+                                           std::vector<uint8_t>& data)
+{
+    if (write && data.size() != length) return MCD_RET_ERR_GENERAL;
+
+    std::lock_guard<std::mutex> lock(m_gdb_mutex);
+    ensure_cores_known();
+
+    if (address > 0xffffffffu) {
+        SCP_WARN(()) << "mcd_server: register space address 0x" << std::hex << address << " is not a register number";
+        return MCD_RET_ERR_GENERAL;
+    }
+    uint32_t core = 0;
+    if (!reg_space_core(addr_space_id, core)) {
+        SCP_WARN(()) << "mcd_server: register space has no core with hw thread id " << addr_space_id;
+        return MCD_RET_ERR_GENERAL;
+    }
     uint32_t inst = m_cores[core].inst;
 
-    /* 'P' writes to the currently selected core, so select it first. */
-    if (!gdb_select_core(core)) {
-        SCP_WARN(()) << "mcd_server: WRITE_REG could not select core " << core;
-        return MCD_RET_ERR_GENERAL;
-    }
+    /* Register widths come from the target description, which is fetched with its
+     * own halt; take ours only afterwards. */
+    ensure_regs_known(inst);
+    update_debug_hold();
 
-    /* "P<regno>=<hex-value>", hex-encoded in the given byte order. */
-    std::string cmd = "P";
-    {
-        char rn[16];
-        std::snprintf(rn, sizeof(rn), "%x", regno);
-        cmd += rn;
-    }
-    cmd += '=';
-    for (std::vector<uint8_t>::size_type i = 8; i < req.size(); ++i) {
-        char b[3];
-        std::snprintf(b, sizeof(b), "%02x", req[i]);
-        cmd += b;
-    }
+    std::vector<reg_span_t> spans;
+    if (!reg_space_split(inst, static_cast<uint32_t>(address), length, spans)) return MCD_RET_ERR_GENERAL;
 
-    std::string reply;
-    if (!gdb_cmd(inst, cmd, reply)) {
-        SCP_WARN(()) << "mcd_server: WRITE_REG forward to " << m_gdb_ports[inst] << " failed";
-        return MCD_RET_ERR_GENERAL;
-    }
-    if (reply == "OK") {
-        SCP_INFO(()) << "mcd_server: WRITE_REG regno=" << regno << " OK";
+    scoped_halt halt(*this, inst);
+
+    if (write) {
+        uint32_t off = 0;
+        for (const reg_span_t& s : spans) {
+            if (!gdb_write_reg(core, s.regno, data.data() + off, s.bytes)) return MCD_RET_ERR_GENERAL;
+            off += s.bytes;
+        }
         return MCD_RET_ACT_NONE;
     }
-    SCP_WARN(()) << "mcd_server: WRITE_REG regno=" << regno << " gdb reply '" << reply << "'";
-    return MCD_RET_ERR_GENERAL;
+
+    std::vector<uint8_t> out;
+    for (const reg_span_t& s : spans) {
+        std::vector<uint8_t> value;
+        if (!gdb_read_reg(core, s.regno, value)) return MCD_RET_ERR_GENERAL;
+        if (value.size() != s.bytes) {
+            SCP_WARN(()) << "mcd_server: register " << s.regno << " read as " << value.size() << " bytes, described as "
+                         << s.bytes;
+            return MCD_RET_ERR_GENERAL;
+        }
+        out.insert(out.end(), value.begin(), value.end());
+    }
+    data = std::move(out);
+    return MCD_RET_ACT_NONE;
+}
+
+/* An address in the register space is valid in one hw thread, named by its gdb
+ * thread id; 0 is "not used" and means core 0. Caller must hold m_gdb_mutex. */
+bool mcd_server::reg_space_core(uint32_t addr_space_id, uint32_t& core)
+{
+    if (m_cores.empty()) return false;
+    if (addr_space_id == 0) {
+        core = 0;
+        return true;
+    }
+    for (uint32_t c = 0; c < m_cores.size(); ++c) {
+        if (m_cores[c].tid == addr_space_id) {
+            core = c;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool mcd_server::reg_space_split(uint32_t inst, uint32_t regno, uint32_t length, std::vector<reg_span_t>& out)
+{
+    out.clear();
+    for (uint32_t done = 0, r = regno; done < length; ++r) {
+        const reg_t* reg = find_reg(inst, r);
+        if (!reg) {
+            SCP_WARN(()) << "mcd_server: register space has no register number " << r;
+            return false;
+        }
+        uint32_t bytes = (reg->bitsize + 7) / 8;
+        if (!bytes || done + bytes > length) {
+            SCP_WARN(()) << "mcd_server: register space length " << length << " from register " << regno
+                         << " does not cover whole registers (" << reg->name << " is " << reg->bitsize << " bits)";
+            return false;
+        }
+        out.push_back(reg_span_t{ r, bytes });
+        done += bytes;
+    }
+    return true;
+}
+
+const mcd_server::reg_t* mcd_server::find_reg(uint32_t inst, uint32_t regnum) const
+{
+    if (inst >= m_inst_regs.size()) return nullptr;
+    for (const reg_t& r : m_inst_regs[inst].regs) {
+        if (r.regnum == regnum) return &r;
+    }
+    return nullptr;
+}
+
+/* Halt instance @p idx so a request can reach its stub at all: while the VM runs,
+ * gdb_read_byte() answers any packet by stopping the VM and sending nothing, so
+ * the read would just time out. Returns true if this call halted it, i.e. the
+ * caller owes a gdb_resume(). Caller must hold m_gdb_mutex. */
+bool mcd_server::gdb_halt(uint32_t idx)
+{
+    drain_pending_stop(idx);
+    if (!m_gdb_running[idx]) return false;
+
+    socket_t fd = gdb_session(idx);
+    if (fd == INVALID_SOCK) return false;
+
+    /* Take the hold before the halt: the attach is deferred to the SystemC
+     * thread, and a halt stops the quantum keeper. */
+    debug_hold(true);
+
+    /* Raw 0x03, as op_stop does; QEMU answers with a stop-reply. It is not
+     * recorded as a stop: it is the reply owed for our own resume, not an event
+     * the client asked about. */
+    const uint8_t brk = 0x03;
+    std::string reply;
+    if (!send_all(fd, &brk, 1) || !gdb_read_packet(fd, reply)) {
+        SCP_WARN(()) << "mcd_server: could not halt " << m_gdb_ports[idx] << " to answer a request";
+        return false;
+    }
+    m_gdb_running[idx] = false;
+    set_inst_cores_running(idx, false);
+    SCP_DEBUG(()) << "mcd_server: halted instance " << idx << " to answer a request: '" << reply << "'";
+    return true;
+}
+
+mcd_server::scoped_halt::scoped_halt(mcd_server& server, uint32_t idx)
+    : m_server(server), m_idx(idx), m_was_running(server.m_core_running)
+{
+    m_halted = m_server.gdb_halt(idx);
+}
+
+void mcd_server::scoped_halt::exclude(uint32_t core)
+{
+    if (core < m_was_running.size()) m_was_running[core] = false;
+}
+
+mcd_server::scoped_halt::~scoped_halt()
+{
+    if (m_halted) m_server.gdb_resume(m_idx, m_was_running);
+}
+
+void mcd_server::gdb_resume(uint32_t idx, const std::vector<bool>& was_running)
+{
+    /* Name the cores that were running, so a core the client left halted stays
+     * halted: a bare 'c' would resume every core of the instance. */
+    std::string cmd = "vCont";
+    for (size_t c = 0; c < m_cores.size(); ++c) {
+        if (m_cores[c].inst == idx && c < was_running.size() && was_running[c]) {
+            char tid[16];
+            std::snprintf(tid, sizeof(tid), ";c:%x", m_cores[c].tid);
+            cmd += tid;
+        }
+    }
+    if (cmd == "vCont") return; /* nothing was running */
+
+    std::string reply;
+    if (!gdb_cmd(idx, cmd, reply, /*wait_reply=*/false)) {
+        SCP_WARN(()) << "mcd_server: could not resume " << m_gdb_ports[idx] << " after a request; it stays halted";
+        return;
+    }
+    m_gdb_running[idx] = true;
+    for (size_t c = 0; c < m_cores.size(); ++c) {
+        if (m_cores[c].inst == idx && c < was_running.size()) m_core_running[c] = was_running[c];
+    }
+    /* See op_run: the hold may only be dropped once the resume has been observed,
+     * and with a breakpoint armed it stays regardless. */
+    if (m_breakpoints.empty()) resume_observed();
+}
+
+/* Read one "qXfer:features:read:<annex>" object. The reply to each request starts
+ * with 'm' (more follows) or 'l' (last chunk); everything after that character is
+ * payload. Caller must hold m_gdb_mutex. */
+std::string mcd_server::gdb_qxfer(uint32_t idx, const std::string& annex)
+{
+    static const uint32_t chunk = 0x400;
+
+    std::string out;
+    /* Bounded by the frame cap: a stub that never sends 'l' must not grow this
+     * without limit. */
+    for (uint32_t offset = 0; out.size() < MCD_MAX_FRAME; offset += chunk) {
+        char range[32];
+        std::snprintf(range, sizeof(range), "%x,%x", offset, chunk);
+        std::string cmd = "qXfer:features:read:" + annex + ":" + range;
+
+        std::string reply;
+        if (!gdb_cmd(idx, cmd, reply)) {
+            SCP_WARN(()) << "mcd_server: '" << cmd << "' forward to " << m_gdb_ports[idx] << " failed";
+            return std::string();
+        }
+        if (reply.empty() || reply[0] == 'E') {
+            SCP_WARN(()) << "mcd_server: '" << cmd << "' refused by " << m_gdb_ports[idx] << ": '" << reply << "'";
+            return std::string();
+        }
+        if (reply[0] != 'm' && reply[0] != 'l') {
+            SCP_WARN(()) << "mcd_server: unexpected qXfer reply '" << reply << "'";
+            return std::string();
+        }
+        /* Target XML is printable ASCII, so neither the '}' escape nor '*'
+         * run-length encoding occurs and neither is decoded. */
+        out += reply.substr(1);
+        if (reply[0] == 'l') break;
+    }
+    return out;
+}
+
+/* Fetch and parse the gdbstub's register description, once per instance: every
+ * core of an instance has the same layout. Caller must hold m_gdb_mutex. */
+void mcd_server::ensure_regs_known(uint32_t idx)
+{
+    if (idx >= m_inst_regs.size() || !m_inst_regs[idx].regs.empty()) return;
+
+    /* Reading the description takes several packets, so the instance has to be
+     * halted for it; put it back as it was afterwards. */
+    scoped_halt halt(*this, idx);
+
+    std::string xml = gdb_qxfer(idx, "target.xml");
+    if (xml.empty()) return;
+
+    /* QEMU lists each feature as <xi:include href="FILE"/> rather than inlining
+     * it, so fetch those too. Capped, and one level only, so a self-referential
+     * include list cannot loop. */
+    std::vector<std::string> annexes;
+    xml_includes(xml, annexes, 32);
+    for (const std::string& annex : annexes) {
+        if (annex == "target.xml") continue;
+        xml += gdb_qxfer(idx, annex);
+    }
+
+    /* A reg naming one of these in its type= is compound. MCD_REG_TYPE_PARTIAL is
+     * never reported: gdb expresses sub-fields as <field> inside a struct or flags
+     * type, and those are not enumerated. */
+    std::vector<std::string> composites;
+    xml_composite_types(xml, composites, 256);
+
+    /* Scan for <feature name="..."> and <reg .../>; no XML library is involved.
+     * regnum is given on the first reg of a feature and implicit + 1 after it. */
+    inst_regs_t out;
+    std::string feature = "general";
+    uint32_t next_regnum = 0;
+
+    /* Intern a group name, returning its id. Ids start at 1: MCD reserves 0. */
+    auto group_id_of = [&out](const std::string& name) {
+        for (reg_group_t& g : out.groups) {
+            if (g.name == name) return g.group_id;
+        }
+        out.groups.push_back(reg_group_t{ static_cast<uint32_t>(out.groups.size() + 1), name, 0 });
+        return out.groups.back().group_id;
+    };
+
+    for (std::string::size_type pos = 0; pos < xml.size() && out.regs.size() < 4096;) {
+        std::string::size_type reg = xml.find("<reg ", pos);
+        std::string::size_type feat = xml.find("<feature ", pos);
+
+        if (feat != std::string::npos && (reg == std::string::npos || feat < reg)) {
+            std::string::size_type end = xml.find('>', feat);
+            if (end == std::string::npos) break;
+            std::string name = xml_attr(xml.substr(feat, end - feat), "name");
+            if (!name.empty()) feature = name;
+            pos = end + 1;
+            continue;
+        }
+        if (reg == std::string::npos) break;
+
+        std::string::size_type end = xml.find('>', reg);
+        if (end == std::string::npos) break;
+        std::string el = xml.substr(reg, end - reg);
+        pos = end + 1;
+
+        /* MCD_REG_NAME_LEN, including the terminating zero. */
+        std::string name = xml_attr(el, "name");
+        if (name.empty() || name.size() > 31) continue;
+
+        std::string num = xml_attr(el, "regnum");
+        if (!num.empty()) next_regnum = static_cast<uint32_t>(std::strtoul(num.c_str(), nullptr, 10));
+
+        std::string group = xml_attr(el, "group");
+        if (group.empty()) group = feature;
+        if (group.size() > 31) group = group.substr(0, 31);
+
+        uint32_t gid = group_id_of(group);
+        uint32_t bitsize = static_cast<uint32_t>(std::strtoul(xml_attr(el, "bitsize").c_str(), nullptr, 10));
+
+        std::string type = xml_attr(el, "type");
+        bool composite = !type.empty() && std::find(composites.begin(), composites.end(), type) != composites.end();
+        uint32_t reg_type = composite ? MCD_REG_TYPE_COMPOUND : MCD_REG_TYPE_SIMPLE;
+
+        out.regs.push_back(reg_t{ next_regnum, gid, bitsize, reg_type, name });
+        ++next_regnum;
+        for (reg_group_t& g : out.groups) {
+            if (g.group_id == gid) ++g.n_registers;
+        }
+    }
+
+    m_inst_regs[idx] = std::move(out);
+    SCP_INFO(()) << "mcd_server: instance " << idx << " describes " << m_inst_regs[idx].regs.size() << " registers in "
+                 << m_inst_regs[idx].groups.size() << " groups";
+}
+
+mcd_return_et mcd_server::op_qry_regs(const std::vector<uint8_t>& req, std::vector<uint8_t>& resp)
+{
+    /* Request: core id u32, and optionally a group id u32 to report only that
+     * group's registers (mcd_qry_reg_map_f). 0, or absent, means every group. */
+    uint32_t core = (req.size() >= 4) ? get_u32(&req[0]) : 0u;
+    uint32_t want_group = (req.size() >= 8) ? get_u32(&req[4]) : 0u;
+
+    std::lock_guard<std::mutex> lock(m_gdb_mutex);
+    ensure_cores_known();
+
+    if (core >= m_cores.size()) {
+        SCP_WARN(()) << "mcd_server: QRY_REGS core id " << core << " out of range";
+        return MCD_RET_ERR_GENERAL;
+    }
+    uint32_t inst = m_cores[core].inst;
+    /* mcd_register_info_st.hw_thread_id: this core is a gdb thread of its instance. */
+    uint32_t hw_thread_id = m_cores[core].tid;
+    ensure_regs_known(inst);
+    /* ensure_regs_known() may have halted and resumed the instance. */
+    update_debug_hold();
+
+    const inst_regs_t& d = m_inst_regs[inst];
+    if (d.regs.empty()) {
+        SCP_WARN(()) << "mcd_server: QRY_REGS got no register description from " << m_gdb_ports[inst];
+        return MCD_RET_ERR_GENERAL;
+    }
+
+    /* Response: the group table, then the registers, each naming its group by id
+     * and carrying its mcd_addr_st, i.e. its register number in the register memory
+     * space, valid in this core's hw thread:
+     * [n_groups u32] { [group_id u32][n_registers u32][name_len u16][name] }
+     * [n_regs u32]   { [regnum u32][group_id u32][bitsize u32][reg_type u32]
+     *                  [hw_thread_id u32][address u64][mem_space_id u32]
+     *                  [addr_space_id u32][addr_space_type u32][name_len u16][name] } */
+    put_u32(resp, static_cast<uint32_t>(d.groups.size()));
+    for (const reg_group_t& g : d.groups) {
+        put_u32(resp, g.group_id);
+        put_u32(resp, g.n_registers);
+        put_u16(resp, static_cast<uint16_t>(g.name.size()));
+        resp.insert(resp.end(), g.name.begin(), g.name.end());
+    }
+
+    uint32_t n = 0;
+    for (const reg_t& r : d.regs) {
+        if (!want_group || r.group_id == want_group) ++n;
+    }
+    put_u32(resp, n);
+    for (const reg_t& r : d.regs) {
+        if (want_group && r.group_id != want_group) continue;
+        put_u32(resp, r.regnum);
+        put_u32(resp, r.group_id);
+        put_u32(resp, r.bitsize);
+        put_u32(resp, r.reg_type);
+        put_u32(resp, hw_thread_id);
+        put_u64(resp, r.regnum);
+        put_u32(resp, MCD_REG_SPACE_ID);
+        put_u32(resp, hw_thread_id);
+        put_u32(resp, MCD_HW_THREAD_ID);
+        put_u16(resp, static_cast<uint16_t>(r.name.size()));
+        resp.insert(resp.end(), r.name.begin(), r.name.end());
+    }
+    return MCD_RET_ACT_NONE;
 }
 
 /* Breakpoints use RSP Z/z packets: "Z<type>,<addr>,<kind>" sets, "z..." removes;
@@ -1657,6 +2397,9 @@ mcd_return_et mcd_server::op_set_bp(const std::vector<uint8_t>& req, std::vector
         return MCD_RET_ERR_GENERAL;
     }
     uint32_t inst = m_cores[core].inst;
+
+    /* The stub answers nothing while the VM runs; halt for the duration. */
+    scoped_halt halt(*this, inst);
 
     /* QEMU installs Z/z breakpoints per address space, not per vCPU: this arms
      * every core of the instance. `core` is recorded only for LIST_BP. */
@@ -1700,6 +2443,9 @@ mcd_return_et mcd_server::op_clr_bp(const std::vector<uint8_t>& req, std::vector
         return MCD_RET_ERR_GENERAL;
     }
     uint32_t inst = m_cores[core].inst;
+
+    /* The stub answers nothing while the VM runs; halt for the duration. */
+    scoped_halt halt(*this, inst);
 
     char cmd[48];
     std::snprintf(cmd, sizeof(cmd), "z%c,%llx,%x", digit, static_cast<unsigned long long>(addr), kind);

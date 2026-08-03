@@ -19,11 +19,45 @@ namespace mcd {
 struct MemSpace {
     uint32_t id;
     std::string name;
+    uint32_t mem_type; // MCD_MEM_SPACE_*, e.g. MCD_MEM_SPACE_IS_REGISTERS
 };
 
 struct CoreInfo {
     uint32_t core_id;
     uint32_t device_id;
+};
+
+struct CoreState {
+    uint32_t core_id;
+    bool running; // false => halted
+};
+
+struct RegInfo {
+    uint32_t regnum;
+    uint32_t group_id;
+    uint32_t bitsize;
+    uint32_t reg_type;     // mcd_reg_type_et: 0 simple, 1 compound, 2 partial
+    uint32_t hw_thread_id; // hw thread the register belongs to, 0 if unassigned
+    // The register's mcd_addr_st: its number in the register memory space, valid
+    // in the hw thread named by addr_space_id.
+    uint64_t address;
+    uint32_t mem_space_id;
+    uint32_t addr_space_id;
+    uint32_t addr_space_type; // MCD_NOTUSED_ID or MCD_HW_THREAD_ID
+    std::string name;
+};
+
+struct RegGroup {
+    uint32_t group_id;
+    std::string name;
+    uint32_t n_registers;
+};
+
+// The target's register description: the complete group table, plus the
+// registers selected by the group filter.
+struct RegMap {
+    std::vector<RegGroup> groups;
+    std::vector<RegInfo> regs;
 };
 
 // Mirrors mcd_bp_type_et on the wire.
@@ -69,8 +103,12 @@ public:
     const std::vector<MemSpace>& mem_spaces() const { return m_mem_spaces; }
     void refresh();
 
-    // Live query, not cached.
+    // Live queries, not cached.
     std::vector<BpInfo> list_breakpoints();
+    std::vector<CoreState> core_states();
+
+    // Reset the platform, then re-query the (re-enumerated) topology.
+    void reset();
 
     mcd_client_t* handle() const { return m_client; }
 
@@ -96,6 +134,8 @@ public:
     const CoreInfo& info() const;
 
     void run();
+    // Resume only this core, leaving the rest of its instance halted.
+    void run_only();
     void stop();
     void step();
 
@@ -103,15 +143,20 @@ public:
     uint64_t read_reg(uint32_t regno);
     void write_reg(uint32_t regno, uint64_t val);
 
+    // The target's description of its registers, in GDB register-number order.
+    // group_id 0 returns every group's registers, non-zero only that group's.
+    RegMap registers(uint32_t group_id = 0);
+
     // kind is the length in bytes (0 => server default).
     void set_breakpoint(uint64_t addr, BpType type = BpType::SwBreak, uint32_t kind = 0);
     void clear_breakpoint(uint64_t addr, BpType type = BpType::SwBreak, uint32_t kind = 0);
 
     StopEvent wait_stop(uint32_t timeout_ms);
 
-    // space_id 0 = physical.
-    std::vector<uint8_t> read_mem(uint64_t addr, uint32_t len, uint32_t space_id = 0);
-    void write_mem(uint64_t addr, const std::vector<uint8_t>& data, uint32_t space_id = 0);
+    // space_id 0 = physical. addr_space_id 0 = "not used"; in the register space
+    // (MCD_REG_SPACE_ID) it is the core's hw thread id and addr a register number.
+    std::vector<uint8_t> read_mem(uint64_t addr, uint32_t len, uint32_t space_id = 0, uint32_t addr_space_id = 0);
+    void write_mem(uint64_t addr, const std::vector<uint8_t>& data, uint32_t space_id = 0, uint32_t addr_space_id = 0);
 
     // Single T at addr, little-endian.
     template <typename T>

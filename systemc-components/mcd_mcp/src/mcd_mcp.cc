@@ -344,6 +344,33 @@ mcd::Core core(uint32_t idx = 0)
     return mcd::Core(*g_conn, idx);
 }
 
+// mcd_mem_type_et as a word. The server reports only the default and the
+// register space; a combination of other bits prints as its value.
+const char* mem_type_name(uint32_t t)
+{
+    switch (t) {
+    case MCD_MEM_SPACE_DEFAULT:
+        return "default";
+    case MCD_MEM_SPACE_IS_REGISTERS:
+        return "registers";
+    default:
+        return "other";
+    }
+}
+
+// mcd_addr_space_type_et as a word: how addr_space_id is to be read.
+const char* addr_space_type_name(uint32_t t)
+{
+    switch (t) {
+    case MCD_NOTUSED_ID:
+        return "notused";
+    case MCD_HW_THREAD_ID:
+        return "hw_thread";
+    default:
+        return "?";
+    }
+}
+
 std::string status_json()
 {
     if (!g_conn) return "{\"connected\":false}";
@@ -368,8 +395,9 @@ std::string status_json()
     o += "],\"mem_spaces\":[";
     for (size_t k = 0; k < g_conn->mem_spaces().size(); ++k) {
         if (k) o += ",";
-        o += "{\"id\":" + std::to_string(g_conn->mem_spaces()[k].id) + ",\"name\":\"" +
-             json_escape(g_conn->mem_spaces()[k].name) + "\"}";
+        const mcd::MemSpace& ms = g_conn->mem_spaces()[k];
+        o += "{\"id\":" + std::to_string(ms.id) + ",\"name\":\"" + json_escape(ms.name) +
+             "\",\"mem_type\":" + std::to_string(ms.mem_type) + ",\"type\":\"" + mem_type_name(ms.mem_type) + "\"}";
     }
     o += "]}";
     return o;
@@ -419,7 +447,10 @@ std::string describe_text()
     }
     o += "mem_spaces (" + std::to_string(g_conn->mem_spaces().size()) + "):\n";
     for (size_t i = 0; i < g_conn->mem_spaces().size(); ++i) {
-        o += "  id=" + std::to_string(g_conn->mem_spaces()[i].id) + "  name=" + g_conn->mem_spaces()[i].name + "\n";
+        const mcd::MemSpace& ms = g_conn->mem_spaces()[i];
+        char line[64];
+        std::snprintf(line, sizeof(line), "  mem_type=0x%x (%s)\n", ms.mem_type, mem_type_name(ms.mem_type));
+        o += "  id=" + std::to_string(ms.id) + "  name=" + ms.name + line;
     }
     return o;
 }
@@ -432,6 +463,73 @@ std::string regs_dump_text(uint32_t cpu_idx, uint32_t start_regno, uint32_t coun
     for (uint32_t r = start_regno; r < start_regno + count; ++r) {
         uint64_t v = c.read_reg(r);
         std::snprintf(line, sizeof(line), "  r%-3u  0x%016llx\n", r, static_cast<unsigned long long>(v));
+        o += line;
+    }
+    return o;
+}
+
+std::string core_state_text()
+{
+    if (!g_conn) throw std::runtime_error("not connected (call mcd_connect first)");
+    std::vector<mcd::CoreState> st = g_conn->core_states();
+    if (st.empty()) return "no cores";
+    std::string o = "core state (" + std::to_string(st.size()) + "):\n";
+    char line[48];
+    for (const auto& s : st) {
+        std::snprintf(line, sizeof(line), "  cpu%-3u %s\n", s.core_id, s.running ? "running" : "halted");
+        o += line;
+    }
+    return o;
+}
+
+/* mcd_reg_type_et as a word. The server reports only simple and compound: gdb
+ * expresses a partial register as a <field> of a composite type. */
+const char* reg_type_name(uint32_t t)
+{
+    switch (t) {
+    case 0:
+        return "simple";
+    case 1:
+        return "compound";
+    case 2:
+        return "partial";
+    default:
+        return "?";
+    }
+}
+
+std::string reg_names_text(uint32_t cpu_idx, uint32_t group_id)
+{
+    mcd::RegMap m = core(cpu_idx).registers(group_id);
+    std::string o = "register groups cpu" + std::to_string(cpu_idx) + " (" + std::to_string(m.groups.size()) + "):\n";
+    char line[224];
+    for (const auto& g : m.groups) {
+        std::snprintf(line, sizeof(line), "  g%-3u %-20s %4u regs\n", g.group_id, g.name.c_str(), g.n_registers);
+        o += line;
+    }
+    o += "registers cpu" + std::to_string(cpu_idx);
+    if (group_id) o += " group " + std::to_string(group_id);
+    o += " (" + std::to_string(m.regs.size()) + "):\n";
+    for (const auto& r : m.regs) {
+        /* Show the group by name; an id absent from the table prints as its id. */
+        std::string gname = "g" + std::to_string(r.group_id);
+        for (const auto& g : m.groups) {
+            if (g.group_id == r.group_id) {
+                gname = g.name;
+                break;
+            }
+        }
+        /* hw_thread_id is 0 when the target assigns the register to no hw thread. */
+        char hwt[24] = "";
+        if (r.hw_thread_id) std::snprintf(hwt, sizeof(hwt), "  hwthread=%u", r.hw_thread_id);
+        /* The register's mcd_addr_st: reachable as memory in mem_space, at address,
+         * in the address space addr_space of the named type. */
+        std::snprintf(line, sizeof(line),
+                      "  r%-4u %-20s %3u bits  %-8s %-20s%s  address=%llu  mem_space=%u  addr_space=%u  "
+                      "addr_space_type=%s\n",
+                      r.regnum, r.name.c_str(), r.bitsize, reg_type_name(r.reg_type), gname.c_str(), hwt,
+                      static_cast<unsigned long long>(r.address), r.mem_space_id, r.addr_space_id,
+                      addr_space_type_name(r.addr_space_type));
         o += line;
     }
     return o;
@@ -503,6 +601,12 @@ std::string call_tool(const std::string& name, const JsonValue* args)
         return status_json();
     }
     if (name == "mcd_run") {
+        // No cpu_idx: resume everything, which is what a debugger's "continue" is.
+        if (args && args->find("cpu_idx")) {
+            uint32_t cpu_idx = static_cast<uint32_t>(opt_int(args, "cpu_idx", 0));
+            core(cpu_idx).run_only();
+            return "ok (cpu" + std::to_string(cpu_idx) + " only)";
+        }
         core().run();
         return "ok";
     }
@@ -513,6 +617,18 @@ std::string call_tool(const std::string& name, const JsonValue* args)
     if (name == "mcd_step") {
         core(static_cast<uint32_t>(opt_int(args, "cpu_idx", 0))).step();
         return "ok";
+    }
+    if (name == "mcd_core_state") {
+        return core_state_text();
+    }
+    if (name == "mcd_reset") {
+        if (!g_conn) throw std::runtime_error("not connected (call mcd_connect first)");
+        g_conn->reset();
+        return "reset done, " + std::to_string(g_conn->cores().size()) + " cores re-enumerated";
+    }
+    if (name == "mcd_reg_names") {
+        return reg_names_text(static_cast<uint32_t>(opt_int(args, "cpu_idx", 0)),
+                              static_cast<uint32_t>(opt_int(args, "group", 0)));
     }
     if (name == "mcd_read_reg") {
         uint32_t cpu_idx = static_cast<uint32_t>(opt_int(args, "cpu_idx", 0));
@@ -528,17 +644,22 @@ std::string call_tool(const std::string& name, const JsonValue* args)
         core(cpu_idx).write_reg(regno, val);
         return "ok";
     }
+    /* space_id selects the memory space (0 = physical), hw_thread the address space
+     * the address is valid in: for the register space that is the core's hw thread
+     * id and addr is a register number. */
     if (name == "mcd_read_mem") {
         uint64_t addr = parse_u64(req_str(args, "addr"), 16);
         uint32_t len = static_cast<uint32_t>(req_int(args, "len"));
         uint32_t space = static_cast<uint32_t>(opt_int(args, "space_id", 0));
-        return hex_dump(addr, core().read_mem(addr, len, space));
+        uint32_t hw_thread = static_cast<uint32_t>(opt_int(args, "hw_thread", 0));
+        return hex_dump(addr, core().read_mem(addr, len, space, hw_thread));
     }
     if (name == "mcd_write_mem") {
         uint64_t addr = parse_u64(req_str(args, "addr"), 16);
         std::vector<uint8_t> data = parse_hex_bytes(req_str(args, "data"));
         uint32_t space = static_cast<uint32_t>(opt_int(args, "space_id", 0));
-        core().write_mem(addr, data, space);
+        uint32_t hw_thread = static_cast<uint32_t>(opt_int(args, "hw_thread", 0));
+        core().write_mem(addr, data, space, hw_thread);
         return "ok";
     }
     if (name == "mcd_refresh") {
@@ -659,14 +780,28 @@ const char* k_tools_list =
     "\"port\":{\"type\":\"integer\"}},\"required\":[\"host\"]}},"
     "{\"name\":\"mcd_disconnect\",\"description\":\"Close the active connection.\","
     "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}},"
-    "{\"name\":\"mcd_status\",\"description\":\"JSON summary of connection, systems, devices, cores, mem_spaces.\","
+    "{\"name\":\"mcd_status\",\"description\":\"JSON summary of connection, systems, devices, cores, and mem_spaces "
+    "with each space's type ('registers' for the space that addresses registers as memory).\","
     "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}},"
-    "{\"name\":\"mcd_run\",\"description\":\"Resume the target.\","
-    "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}},"
+    "{\"name\":\"mcd_run\",\"description\":\"Resume the target. With cpu_idx, resume only that core and leave the "
+    "others halted.\","
+    "\"inputSchema\":{\"type\":\"object\",\"properties\":{\"cpu_idx\":{\"type\":\"integer\"}}}},"
     "{\"name\":\"mcd_stop\",\"description\":\"Halt the target.\","
     "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}},"
     "{\"name\":\"mcd_step\",\"description\":\"Single-step one core.\","
     "\"inputSchema\":{\"type\":\"object\",\"properties\":{\"cpu_idx\":{\"type\":\"integer\"}}}},"
+    "{\"name\":\"mcd_core_state\",\"description\":\"Which cores are running and which are halted. Returns "
+    "immediately; never waits for a stop.\","
+    "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}},"
+    "{\"name\":\"mcd_reset\",\"description\":\"Reset the platform and re-enumerate its cores.\","
+    "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}},"
+    "{\"name\":\"mcd_reg_names\",\"description\":\"Table of the target's register groups, then its register names, GDB "
+    "register numbers, widths, kind (simple or compound) and group names for a core (default cpu0), plus the hw thread "
+    "id where the target assigns one and the register's address in the register memory space (mem_space, addr_space, "
+    "addr_space_type), which mcd_read_mem/mcd_write_mem accept. Use it to find the regno for mcd_read_reg. "
+    "group is a group id from the group table; it lists only that group's registers.\","
+    "\"inputSchema\":{\"type\":\"object\",\"properties\":{\"cpu_idx\":{\"type\":\"integer\"},"
+    "\"group\":{\"type\":\"integer\"}}}},"
     "{\"name\":\"mcd_read_reg\",\"description\":\"Read a GDB register by number for a core (default cpu0); returns "
     "0x-prefixed hex. Register numbering follows the target's GDB layout (AArch64: x0..x30=0..30, sp=31, pc=32).\","
     "\"inputSchema\":{\"type\":\"object\",\"properties\":{\"cpu_idx\":{\"type\":\"integer\"},\"regno\":{\"type\":"
@@ -677,18 +812,23 @@ const char* k_tools_list =
     "\"inputSchema\":{\"type\":\"object\",\"properties\":{\"cpu_idx\":{\"type\":\"integer\"},\"regno\":{\"type\":"
     "\"integer\"},"
     "\"value\":{\"type\":\"string\"}},\"required\":[\"regno\",\"value\"]}},"
-    "{\"name\":\"mcd_read_mem\",\"description\":\"Read memory; returns a hex dump.\","
+    "{\"name\":\"mcd_read_mem\",\"description\":\"Read memory; returns a hex dump. space_id picks the memory space "
+    "from mcd_status (default 0, physical). The register space (type 'registers') addresses registers as memory: addr "
+    "is then the register number and hw_thread the core's hw thread id from mcd_reg_names (default 0, meaning cpu0); "
+    "len must cover whole registers.\","
     "\"inputSchema\":{\"type\":\"object\",\"properties\":{\"addr\":{\"type\":\"string\"},"
-    "\"len\":{\"type\":\"integer\"},\"space_id\":{\"type\":\"integer\"}},"
+    "\"len\":{\"type\":\"integer\"},\"space_id\":{\"type\":\"integer\"},\"hw_thread\":{\"type\":\"integer\"}},"
     "\"required\":[\"addr\",\"len\"]}},"
-    "{\"name\":\"mcd_write_mem\",\"description\":\"Write memory from a hex byte string.\","
+    "{\"name\":\"mcd_write_mem\",\"description\":\"Write memory from a hex byte string. space_id and hw_thread are as "
+    "for mcd_read_mem, so writing to the register space writes registers, the data being whole register values in "
+    "target byte order.\","
     "\"inputSchema\":{\"type\":\"object\",\"properties\":{\"addr\":{\"type\":\"string\"},"
-    "\"data\":{\"type\":\"string\"},\"space_id\":{\"type\":\"integer\"}},"
+    "\"data\":{\"type\":\"string\"},\"space_id\":{\"type\":\"integer\"},\"hw_thread\":{\"type\":\"integer\"}},"
     "\"required\":[\"addr\",\"data\"]}},"
     "{\"name\":\"mcd_refresh\",\"description\":\"Re-query the target and return the updated status.\","
     "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}},"
     "{\"name\":\"mcd_describe\",\"description\":\"Human-readable topology table: host, systems, devices, cores, "
-    "mem_spaces.\","
+    "mem_spaces with their types.\","
     "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}},"
     "{\"name\":\"mcd_regs_dump\",\"description\":\"Dump a range of GDB registers for a core (default: r0..r31 of "
     "cpu0).\","

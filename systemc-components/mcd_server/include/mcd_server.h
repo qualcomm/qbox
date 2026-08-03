@@ -74,6 +74,7 @@ typedef struct mcd_core_st {
 struct mcd_mem_space_st {
     uint32_t mem_space_id;
     char mem_space_name[64];
+    uint32_t mem_type; /* MCD_MEM_SPACE_* */
 };
 
 typedef enum {
@@ -89,10 +90,13 @@ typedef enum {
 #define MCD_OP_RUN            0x10
 #define MCD_OP_STOP           0x11
 #define MCD_OP_STEP           0x12
+#define MCD_OP_QRY_STATE      0x13
+#define MCD_OP_RESET          0x14
 #define MCD_OP_READ_MEM       0x20
 #define MCD_OP_WRITE_MEM      0x21
 #define MCD_OP_READ_REG       0x30
 #define MCD_OP_WRITE_REG      0x31
+#define MCD_OP_QRY_REGS       0x32
 #define MCD_OP_SET_BP         0x40
 #define MCD_OP_CLR_BP         0x41
 #define MCD_OP_LIST_BP        0x42
@@ -104,6 +108,27 @@ typedef enum {
 #define MCD_BP_WATCH_WRITE  2 /* write watchpoint (Z2) */
 #define MCD_BP_WATCH_READ   3 /* read watchpoint (Z3) */
 #define MCD_BP_WATCH_ACCESS 4 /* access watchpoint (Z4) */
+
+/* Memory space kinds reported by MCD_OP_QRY_MEM_SPACES; values match
+ * mcd_mem_type_et. */
+#define MCD_MEM_SPACE_DEFAULT      0x00000000 /* none of the types below */
+#define MCD_MEM_SPACE_IS_REGISTERS 0x00000001 /* the space contains only registers */
+
+/* Interpretation of mcd_addr_st.addr_space_id; values match
+ * mcd_addr_space_type_et, of which only these two are used. */
+#define MCD_NOTUSED_ID   0 /* no address space id */
+#define MCD_HW_THREAD_ID 4 /* the hw thread the address is valid in */
+
+/* Id of the register memory space. MCD models a register that is not memory
+ * mapped as memory in a space of type MCD_MEM_SPACE_IS_REGISTERS, addressed by
+ * register number. Router spaces are numbered up from 0 as they are bound, so a
+ * high sentinel cannot collide with one. */
+#define MCD_REG_SPACE_ID 0xFFFF0000u
+
+/* Register kinds reported by MCD_OP_QRY_REGS; values match mcd_reg_type_et. */
+#define MCD_REG_TYPE_SIMPLE   0 /* a plain register */
+#define MCD_REG_TYPE_COMPOUND 1 /* built from other types (gdb vector/union/struct) */
+#define MCD_REG_TYPE_PARTIAL  2 /* a sub-field of another register */
 
 /* Stop reasons reported by MCD_OP_WAIT_STOP. */
 #define MCD_STOP_RUNNING      0 /* timed out; target still running */
@@ -127,6 +152,11 @@ class mcd_server : public sc_core::sc_module
 
 public:
     cci::cci_param<unsigned int> p_mcd_port;
+    /* Interface to listen on: "127.0.0.1" (default), an address, or "*" for all.
+     * This port is unauthenticated access to all memory and registers. */
+    cci::cci_param<std::string> p_mcd_host;
+    /* Block in start_of_simulation until a client connects, like QEMU's -S. */
+    cci::cci_param<bool> p_wait_for_client;
 
     mcd_server(const sc_core::sc_module_name& name);
     ~mcd_server();
@@ -145,6 +175,7 @@ public:
 
     void before_end_of_elaboration() override;
     void end_of_elaboration() override;
+    void start_of_simulation() override;
 
 private:
     mcd_return_et mcd_qry_servers(uint32_t* num_servers, mcd_server_st* servers);
@@ -170,8 +201,11 @@ private:
     mcd_return_et op_run(const std::vector<uint8_t>& req, std::vector<uint8_t>& resp);
     mcd_return_et op_stop(const std::vector<uint8_t>& req, std::vector<uint8_t>& resp);
     mcd_return_et op_step(const std::vector<uint8_t>& req, std::vector<uint8_t>& resp);
+    mcd_return_et op_qry_state(const std::vector<uint8_t>& req, std::vector<uint8_t>& resp);
+    mcd_return_et op_reset(const std::vector<uint8_t>& req, std::vector<uint8_t>& resp);
     mcd_return_et op_read_reg(const std::vector<uint8_t>& req, std::vector<uint8_t>& resp);
     mcd_return_et op_write_reg(const std::vector<uint8_t>& req, std::vector<uint8_t>& resp);
+    mcd_return_et op_qry_regs(const std::vector<uint8_t>& req, std::vector<uint8_t>& resp);
     mcd_return_et op_set_bp(const std::vector<uint8_t>& req, std::vector<uint8_t>& resp);
     mcd_return_et op_clr_bp(const std::vector<uint8_t>& req, std::vector<uint8_t>& resp);
     mcd_return_et op_list_bp(const std::vector<uint8_t>& req, std::vector<uint8_t>& resp);
@@ -228,6 +262,103 @@ private:
     };
     std::vector<core_t> m_cores;
 
+    /* Per-core run state, parallel to m_cores: QEMU's run control is instance
+     * wide except for a vCont naming individual threads, so this is the only
+     * record of a single core having been resumed. Guarded by m_gdb_mutex. */
+    std::vector<bool> m_core_running;
+
+    /* Both require m_gdb_mutex. */
+    void set_inst_cores_running(uint32_t inst, bool running);
+    bool inst_all_cores_running(uint32_t inst);
+
+    /* Register description of one core, from the gdbstub's target XML. Cached per
+     * instance, since every core of an instance has the same layout. Groups are
+     * objects with ids, as mcd_register_group_st/mcd_register_info_st require:
+     * a register carries its group's id, not a name. Id 0 is reserved by MCD, so
+     * ids run from 1. hw_thread_id is not cached here: it is per core, this is per
+     * instance. Guarded by m_gdb_mutex. */
+    struct reg_t {
+        uint32_t regnum;
+        uint32_t group_id;
+        uint32_t bitsize;
+        uint32_t reg_type; /* MCD_REG_TYPE_* */
+        std::string name;
+    };
+    struct reg_group_t {
+        uint32_t group_id;
+        std::string name;
+        uint32_t n_registers;
+    };
+    struct inst_regs_t {
+        std::vector<reg_group_t> groups;
+        std::vector<reg_t> regs;
+    };
+    std::vector<inst_regs_t> m_inst_regs;
+
+    /* Description of register @p regnum of instance @p inst, or null. Caller must
+     * hold m_gdb_mutex and have called ensure_regs_known(). */
+    const reg_t* find_reg(uint32_t inst, uint32_t regnum) const;
+
+    /* One register of @p core over the RSP session. The value is the register in
+     * target byte order, i.e. the bytes the stub hex-encodes. Caller must hold
+     * m_gdb_mutex and keep the instance halted (scoped_halt): the stub parses no
+     * packet while the VM runs. */
+    bool gdb_read_reg(uint32_t core, uint32_t regno, std::vector<uint8_t>& value);
+    bool gdb_write_reg(uint32_t core, uint32_t regno, const uint8_t* value, uint32_t len);
+
+    /* One access to the register memory space (MCD_REG_SPACE_ID): @p address is a
+     * register number, @p addr_space_id the gdb thread id of the core it is valid
+     * in (0 => core 0), and @p length must cover whole registers. @p data holds the
+     * values to write, or receives the values read, in the byte order READ_REG
+     * reports. Takes m_gdb_mutex itself. */
+    mcd_return_et access_reg_space(bool write, uint64_t address, uint32_t length, uint32_t addr_space_id,
+                                   std::vector<uint8_t>& data);
+    /* Core index for gdb thread id @p addr_space_id, 0 meaning core 0. */
+    bool reg_space_core(uint32_t addr_space_id, uint32_t& core);
+    /* Split @p length bytes from register number @p regno into whole registers,
+     * using the widths of the target description. Fails unless they match exactly. */
+    struct reg_span_t {
+        uint32_t regno;
+        uint32_t bytes;
+    };
+    bool reg_space_split(uint32_t inst, uint32_t regno, uint32_t length, std::vector<reg_span_t>& out);
+
+    /* QEMU's gdbstub parses no packet while the VM runs: any byte other than the
+     * 0x03 interrupt makes gdb_read_byte() vm_stop() and answer nothing at all. A
+     * request that has to reach a running instance therefore halts it first.
+     * gdb_halt() returns true if this call did the halt, i.e. gdb_resume() is owed.
+     * Both need m_gdb_mutex. */
+    bool gdb_halt(uint32_t idx);
+    void gdb_resume(uint32_t idx, const std::vector<bool>& was_running);
+
+    /* RAII form of the above, for requests with several exit paths: halts on entry
+     * if needed, restores the running set on exit. MCD does not restrict register
+     * or memory access to halted cores (mcd_execute_txlist_f has no such
+     * precondition), so the halt is transparent to the client. exclude() drops a
+     * core from the set to restore, for STEP, which leaves its core halted. */
+    class scoped_halt
+    {
+    public:
+        scoped_halt(mcd_server& server, uint32_t idx);
+        ~scoped_halt();
+        void exclude(uint32_t core);
+
+    private:
+        mcd_server& m_server;
+        uint32_t m_idx;
+        bool m_halted;
+        std::vector<bool> m_was_running;
+    };
+
+    /* Fetch and parse the target XML for instance @p idx, once. Caller must hold
+     * m_gdb_mutex, as for gdb_qxfer() and gdb_monitor(). */
+    void ensure_regs_known(uint32_t idx);
+    /* Read an "qXfer:features:read:<annex>" object in 0x400-byte chunks. Returns
+     * the concatenated payload, or "" if the stub refuses or the transport fails. */
+    std::string gdb_qxfer(uint32_t idx, const std::string& annex);
+    /* Run @p command through the stub's HMP monitor as "qRcmd,<hex>". */
+    bool gdb_monitor(uint32_t idx, const std::string& command);
+
     /* Last stop reported by an instance, cached until the core it belongs to asks:
      * a stop arrives once per session, but WAIT_STOP is per core and the stopping
      * core need not be the one waited on. Guarded by m_gdb_mutex. */
@@ -274,11 +405,13 @@ private:
     bool gdb_cmd(uint32_t idx, const std::string& cmd, std::string& reply, bool wait_reply = true);
 
     /* m_mem_spaces keeps registration order for query; m_transactors maps space_id
-     * to a callable issuing a transport_dbg and returning the bytes handled. */
+     * to a callable issuing a transport_dbg and returning the bytes handled. The
+     * register space has no transactor: it is served over the RSP session. */
     std::vector<mcd_mem_space_st> m_mem_spaces;
     std::map<uint32_t, std::function<unsigned int(tlm::tlm_generic_payload&)>> m_transactors;
 
-    void add_mem_space(uint32_t space_id, const std::string& name,
+    /* A null @p fn registers a space with no transactor. */
+    void add_mem_space(uint32_t space_id, const std::string& name, uint32_t mem_type,
                        std::function<unsigned int(tlm::tlm_generic_payload&)> fn);
 };
 

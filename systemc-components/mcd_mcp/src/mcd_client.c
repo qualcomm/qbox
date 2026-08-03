@@ -397,20 +397,133 @@ int mcd_client_qry_mem_spaces(mcd_client_t* c, uint32_t* num, mcd_mem_space_st* 
     uint32_t count = get_u32_le(&resp[0]);
     uint32_t cap = (num && out) ? *num : 0;
     uint32_t i;
+    /* Per space: [mem_space_id u32][mem_type u32][64-byte fixed name]. */
     for (i = 0; i < count && i < cap; ++i) {
-        uint32_t off = 4 + i * (4 + 64);
-        if (off + 4 + 64 > blen) return -1;
+        uint32_t off = 4 + i * (4 + 4 + 64);
+        if (off + 4 + 4 + 64 > blen) return -1;
         out[i].mem_space_id = get_u32_le(&resp[off]);
-        memcpy(out[i].mem_space_name, &resp[off + 4], 64);
+        out[i].mem_type = get_u32_le(&resp[off + 4]);
+        memcpy(out[i].mem_space_name, &resp[off + 8], 64);
         out[i].mem_space_name[sizeof(out[i].mem_space_name) - 1] = '\0';
     }
     if (num) *num = i;
     return 0;
 }
 
+int mcd_client_qry_state(mcd_client_t* c, uint32_t* num, mcd_core_state_st* out)
+{
+    uint8_t resp[MCD_CLIENT_SCRATCH];
+    uint32_t blen = 0;
+    if (transact(c, 0x13, NULL, 0, resp, sizeof(resp), &blen) != 0) return -1;
+    if (blen < 4) return -1;
+
+    uint32_t count = get_u32_le(&resp[0]);
+    uint32_t cap = (num && out) ? *num : 0;
+    uint32_t i;
+    for (i = 0; i < count && i < cap; ++i) {
+        uint32_t off = 4 + i * 5;
+        if (off + 5 > blen) return -1;
+        out[i].core_id = get_u32_le(&resp[off]);
+        out[i].running = resp[off + 4];
+    }
+    if (num) *num = i;
+    return 0;
+}
+
+/* The register description is variable length and far larger than the fixed
+ * scratch buffers the other queries use, so the reply frame is read into a heap
+ * buffer bounded by MCD_MAX_FRAME. That buffer is freed here; the caller owns
+ * only @p groups and @p regs. */
+int mcd_client_qry_regs(mcd_client_t* c, uint32_t cpu_idx, uint32_t group_id, uint32_t* num_groups,
+                        mcd_reg_group_st* groups, uint32_t* num_regs, mcd_reg_info_st* regs)
+{
+    uint8_t req[8];
+    put_u32_le(&req[0], cpu_idx);
+    put_u32_le(&req[4], group_id);
+
+    uint8_t* resp = (uint8_t*)malloc(MCD_MAX_FRAME);
+    if (!resp) return -1;
+
+    uint32_t blen = 0;
+    if (transact(c, 0x32, req, sizeof(req), resp, MCD_MAX_FRAME, &blen) != 0 || blen < 4) {
+        free(resp);
+        return -1;
+    }
+
+    /* [n_groups u32] { [group_id u32][n_registers u32][name_len u16][name] }
+     * [n_regs u32]   { [regnum u32][group_id u32][bitsize u32][reg_type u32]
+     *                  [hw_thread_id u32][address u64][mem_space_id u32]
+     *                  [addr_space_id u32][addr_space_type u32][name_len u16][name] }
+     * The offset only advances by what has been validated against blen. */
+    uint32_t gcount = get_u32_le(&resp[0]);
+    uint32_t gcap = (num_groups && groups) ? *num_groups : 0;
+    uint32_t off = 4;
+    uint32_t g;
+    for (g = 0; g < gcount; ++g) {
+        uint32_t name_len;
+        if (off + 10 > blen) break;
+        name_len = (uint32_t)resp[off + 8] | ((uint32_t)resp[off + 9] << 8);
+        if (off + 10 + name_len > blen) break;
+
+        if (g < gcap) {
+            uint32_t n = name_len < sizeof(groups[g].name) - 1 ? name_len : (uint32_t)sizeof(groups[g].name) - 1;
+            groups[g].group_id = get_u32_le(&resp[off]);
+            groups[g].n_registers = get_u32_le(&resp[off + 4]);
+            memcpy(groups[g].name, &resp[off + 10], n);
+            groups[g].name[n] = '\0';
+        }
+        off += 10 + name_len;
+    }
+    /* A short group table leaves the register count unreadable. */
+    if (g < gcount || off + 4 > blen) {
+        free(resp);
+        return -1;
+    }
+
+    uint32_t rcount = get_u32_le(&resp[off]);
+    uint32_t rcap = (num_regs && regs) ? *num_regs : 0;
+    off += 4;
+    uint32_t i;
+    for (i = 0; i < rcount; ++i) {
+        uint32_t name_len;
+        if (off + 42 > blen) break;
+        name_len = (uint32_t)resp[off + 40] | ((uint32_t)resp[off + 41] << 8);
+        if (off + 42 + name_len > blen) break;
+
+        if (i < rcap) {
+            uint32_t n = name_len < sizeof(regs[i].name) - 1 ? name_len : (uint32_t)sizeof(regs[i].name) - 1;
+            regs[i].regnum = get_u32_le(&resp[off]);
+            regs[i].group_id = get_u32_le(&resp[off + 4]);
+            regs[i].bitsize = get_u32_le(&resp[off + 8]);
+            regs[i].reg_type = get_u32_le(&resp[off + 12]);
+            regs[i].hw_thread_id = get_u32_le(&resp[off + 16]);
+            regs[i].address = get_u64_le(&resp[off + 20]);
+            regs[i].mem_space_id = get_u32_le(&resp[off + 28]);
+            regs[i].addr_space_id = get_u32_le(&resp[off + 32]);
+            regs[i].addr_space_type = get_u32_le(&resp[off + 36]);
+            memcpy(regs[i].name, &resp[off + 42], n);
+            regs[i].name[n] = '\0';
+        }
+        off += 42 + name_len;
+    }
+    free(resp);
+
+    /* Report what was written, not what the server claimed. */
+    if (num_groups) *num_groups = g < gcap ? g : gcap;
+    if (num_regs) *num_regs = i < rcap ? i : rcap;
+    return 0;
+}
+
 /* Run control returns no payload, so capacity 0: any payload the server does
  * send is a protocol error. */
 int mcd_client_run(mcd_client_t* c) { return transact(c, 0x10, NULL, 0, NULL, 0, NULL); }
+
+int mcd_client_run_core(mcd_client_t* c, uint32_t cpu_idx)
+{
+    uint8_t req[4];
+    put_u32_le(req, cpu_idx);
+    return transact(c, 0x10, req, sizeof(req), NULL, 0, NULL);
+}
 
 int mcd_client_stop(mcd_client_t* c) { return transact(c, 0x11, NULL, 0, NULL, 0, NULL); }
 
@@ -421,15 +534,19 @@ int mcd_client_step(mcd_client_t* c, uint32_t cpu_idx)
     return transact(c, 0x12, req, sizeof(req), NULL, 0, NULL);
 }
 
-int mcd_client_read_mem(mcd_client_t* c, uint64_t addr, uint32_t len, uint32_t space_id, uint8_t* buf)
+int mcd_client_reset(mcd_client_t* c) { return transact(c, 0x14, NULL, 0, NULL, 0, NULL); }
+
+int mcd_client_read_mem(mcd_client_t* c, uint64_t addr, uint32_t len, uint32_t space_id, uint32_t addr_space_id,
+                        uint8_t* buf)
 {
     if (len > MCD_MAX_FRAME) return -1;
     if (len && !buf) return -1;
 
-    uint8_t req[16];
+    uint8_t req[20];
     put_u64_le(&req[0], addr);
     put_u32_le(&req[8], len);
     put_u32_le(&req[12], space_id);
+    put_u32_le(&req[16], addr_space_id);
 
     /* The reply payload is exactly @p len bytes, written into the caller's
      * buffer, which is therefore also the capacity bound. */
@@ -439,19 +556,21 @@ int mcd_client_read_mem(mcd_client_t* c, uint64_t addr, uint32_t len, uint32_t s
     return 0;
 }
 
-int mcd_client_write_mem(mcd_client_t* c, uint64_t addr, uint32_t len, uint32_t space_id, const uint8_t* buf)
+int mcd_client_write_mem(mcd_client_t* c, uint64_t addr, uint32_t len, uint32_t space_id, uint32_t addr_space_id,
+                         const uint8_t* buf)
 {
-    /* Bound len so the 16 + len payload length cannot wrap. */
+    /* Bound len so the 20 + len payload length cannot wrap. */
     if (len > MCD_MAX_FRAME) return -1;
     if (len && !buf) return -1;
 
-    uint32_t plen = 16 + len;
+    uint32_t plen = 20 + len;
     uint8_t* req = (uint8_t*)malloc(plen);
     if (!req) return -1;
     put_u64_le(&req[0], addr);
     put_u32_le(&req[8], len);
     put_u32_le(&req[12], space_id);
-    if (len) memcpy(&req[16], buf, len);
+    put_u32_le(&req[16], addr_space_id);
+    if (len) memcpy(&req[20], buf, len);
 
     int rc = transact(c, 0x21, req, plen, NULL, 0, NULL);
     free(req);
