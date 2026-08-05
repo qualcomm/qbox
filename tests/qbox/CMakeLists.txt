@@ -351,4 +351,5 @@ add_subdirectory(display)
 # built on non-Windows platforms (see systemc-components/CMakeLists.txt).
 if(NOT WIN32)
     add_subdirectory(mcd)
+    add_subdirectory(reset-stress)
 endif()
