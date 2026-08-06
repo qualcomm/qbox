@@ -17,13 +17,6 @@ INCBIN(ZipArchive_smmu500_, __FILE__ "_config.zip");
 
 namespace gs {
 
-static std::string make_cb_reg_name(const std::string& prefix, int cb) { return prefix + std::to_string(cb); }
-
-static std::string make_cb_reg_path(const std::string& prefix, int cb)
-{
-    return "smmu500." + prefix + std::to_string(cb);
-}
-
 template <unsigned int BUSWIDTH>
 smmu500<BUSWIDTH>::smmu500(sc_core::sc_module_name _name)
     : sc_core::sc_module(_name)
@@ -47,46 +40,8 @@ smmu500<BUSWIDTH>::smmu500(sc_core::sc_module_name _name)
 {
     SCP_TRACE(())("Constructor");
     sc_assert(loaded_ok);
+    set_cb_bank_base(static_cast<uint64_t>(p_num_pages) * SMMU_PAGESIZE);
     bind_regs(M);
-
-    /* Create per-CB page registers */
-    for (int cb = 0; cb < p_num_cb; cb++) {
-        uint32_t cb_base = (p_num_pages + cb) * SMMU_PAGESIZE;
-
-#define MAKE_CB_REG(vec, suffix, offset)                                                                           \
-    do {                                                                                                           \
-        auto rn = make_cb_reg_name("SMMU_CB_" suffix, cb);                                                         \
-        auto rp = make_cb_reg_path("SMMU_CB_" suffix, cb);                                                         \
-        vec.push_back(std::make_shared<gs::gs_register<uint32_t>>(rn.c_str(), rp.c_str(), cb_base + (offset), 1)); \
-        M.bind_reg(*vec.back());                                                                                   \
-    } while (0)
-
-        MAKE_CB_REG(SMMU_CB_SCTLR, "SCTLR", 0x0);
-        MAKE_CB_REG(SMMU_CB_ACTLR, "ACTLR", 0x4);
-        MAKE_CB_REG(SMMU_CB_RESUME, "RESUME", 0x8);
-        MAKE_CB_REG(SMMU_CB_TCR2, "TCR2", 0x10);
-        MAKE_CB_REG(SMMU_CB_TTBR0_LOW, "TTBR0_LOW", 0x20);
-        MAKE_CB_REG(SMMU_CB_TTBR0_HIGH, "TTBR0_HIGH", 0x24);
-        MAKE_CB_REG(SMMU_CB_TTBR1_LOW, "TTBR1_LOW", 0x28);
-        MAKE_CB_REG(SMMU_CB_TTBR1_HIGH, "TTBR1_HIGH", 0x2c);
-        MAKE_CB_REG(SMMU_CB_TCR_LPAE, "TCR_LPAE", 0x30);
-        MAKE_CB_REG(SMMU_CB_CONTEXTIDR, "CONTEXTIDR", 0x34);
-        MAKE_CB_REG(SMMU_CB_PRRR_MAIR0, "PRRR_MAIR0", 0x38);
-        MAKE_CB_REG(SMMU_CB_NMRR_MAIR1, "NMRR_MAIR1", 0x3c);
-        MAKE_CB_REG(SMMU_CB_FSR, "FSR", 0x58);
-        MAKE_CB_REG(SMMU_CB_FSRRESTORE, "FSRRESTORE", 0x5c);
-        MAKE_CB_REG(SMMU_CB_FAR_LOW, "FAR_LOW", 0x60);
-        MAKE_CB_REG(SMMU_CB_FAR_HIGH, "FAR_HIGH", 0x64);
-        MAKE_CB_REG(SMMU_CB_FSYNR0, "FSYNR0", 0x68);
-        MAKE_CB_REG(SMMU_CB_IPAFAR_LOW, "IPAFAR_LOW", 0x70);
-        MAKE_CB_REG(SMMU_CB_IPAFAR_HIGH, "IPAFAR_HIGH", 0x74);
-        MAKE_CB_REG(SMMU_CB_TLBIASID, "TLBIASID", 0x610);
-        MAKE_CB_REG(SMMU_CB_TLBIALL, "TLBIALL", 0x618);
-        MAKE_CB_REG(SMMU_CB_TLBSYNC, "TLBSYNC", 0x7f0);
-        MAKE_CB_REG(SMMU_CB_TLBSTATUS, "TLBSTATUS", 0x7f4);
-
-#undef MAKE_CB_REG
-    }
 
     socket.bind(M.target_socket);
     reset.register_value_changed_cb([&](bool value) {
@@ -139,40 +94,33 @@ void smmu500<BUSWIDTH>::before_end_of_elaboration()
     SMMU_NSCR0.post_write([this](TXN(txn)) { SMMU_SCR0 = (uint32_t)SMMU_NSCR0; });
 
     /* Per-CB callbacks */
-    for (int cb = 0; cb < p_num_cb; cb++) {
-        /* FSR post_write - update context IRQs for all CBs */
-        SMMU_CB_FSR[cb]->post_write([this](TXN(txn)) {
-            for (unsigned int i = 0; i < p_num_cb; i++) smmu500_update_ctx_irq(i);
-        });
+    /* FSR post_write - update context IRQs for all CBs */
+    SMMU_CB_FSR.post_write([this](TXN(txn)) {
+        const auto access = SMMU_CB_FSR.decode_access(txn);
+        if (!access || access.indices.size() != 1 || access.indices[0] >= p_num_cb) return;
+        for (unsigned int i = 0; i < p_num_cb; i++) smmu500_update_ctx_irq(i);
+    });
 
-        /* TLBIASID post_write - TLB flush by value */
-        SMMU_CB_TLBIASID[cb]->post_write([this](TXN(txn)) {
-            uint32_t val = *(uint32_t*)txn.get_data_ptr();
-            for (auto tbu : tbus) {
-                tbu->start_invalidates();
-            }
-            for (auto tbu : tbus) {
-                tbu->invalidate(val);
-            }
-            for (auto tbu : tbus) {
-                tbu->stop_invalidates();
-            }
-        });
+    /* TLBIASID post_write - TLB flush by value */
+    SMMU_CB_TLBIASID.post_write([this](TXN(txn)) {
+        const auto access = SMMU_CB_TLBIASID.decode_access(txn);
+        if (!access || access.indices.size() != 1 || access.indices[0] >= p_num_cb) return;
+        uint32_t val = *(uint32_t*)txn.get_data_ptr();
+        for (auto tbu : tbus) tbu->start_invalidates();
+        for (auto tbu : tbus) tbu->invalidate(val);
+        for (auto tbu : tbus) tbu->stop_invalidates();
+    });
 
-        /* TLBIALL post_write - TLB flush all for this CB */
-        SMMU_CB_TLBIALL[cb]->post_write([this, cb](TXN(txn)) {
-            SCP_DEBUG(()) << "TLBIALL write for CB" << cb;
-            for (auto tbu : tbus) {
-                tbu->start_invalidates();
-            }
-            for (auto tbu : tbus) {
-                tbu->invalidate(cb);
-            }
-            for (auto tbu : tbus) {
-                tbu->stop_invalidates();
-            }
-        });
-    }
+    /* TLBIALL post_write - TLB flush all for this CB */
+    SMMU_CB_TLBIALL.post_write([this](TXN(txn)) {
+        const auto access = SMMU_CB_TLBIALL.decode_access(txn);
+        if (!access || access.indices.size() != 1 || access.indices[0] >= p_num_cb) return;
+        const unsigned int cb = static_cast<unsigned int>(access.indices[0]);
+        SCP_DEBUG(()) << "TLBIALL write for CB" << cb;
+        for (auto tbu : tbus) tbu->start_invalidates();
+        for (auto tbu : tbus) tbu->invalidate(cb);
+        for (auto tbu : tbus) tbu->stop_invalidates();
+    });
 }
 
 template class smmu500<32>;

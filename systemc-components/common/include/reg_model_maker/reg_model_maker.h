@@ -401,7 +401,7 @@ public:
     }
 
     template <class TYPE>
-    void bind_reg(gs::gs_register<TYPE>& reg)
+    void bind_reg(gs::gs_register<TYPE>& reg, uint32_t priority = 0)
     {
         std::string path = reg.get_path();
         std::string self_full_name = std::string(sc_core::sc_module::name());
@@ -425,6 +425,19 @@ public:
         std::string reg_address_str = reg_target_socket_name + ".address";
         uint64_t new_reg_offset = reg.get_offset() + mod_address + (m_jza.is_platform_model() ? parent_address : 0);
         cci_set<uint64_t>(reg_address_str, new_reg_offset);
+        if constexpr (gs::is_gs_bank<TYPE>::value) {
+            auto encode_dims = [](const std::vector<uint64_t>& values) {
+                std::string result;
+                for (size_t i = 0; i < values.size(); ++i) {
+                    if (i != 0) result += ',';
+                    result += std::to_string(values[i]);
+                }
+                return result;
+            };
+            cci_set<std::string>(reg_target_socket_name + ".dim_strides", encode_dims(reg.get_dim_strides()));
+            cci_set<std::string>(reg_target_socket_name + ".dim_counts", encode_dims(reg.get_dim_counts()));
+        }
+        if (priority != 0) cci_set<uint32_t>(reg_target_socket_name + ".priority", priority);
         m_sh_comp->m_reg_router->initiator_socket.bind(reg);
         m_sh_comp->m_reg_router->rename_last(reg_target_socket_name);
         m_bound_regs_num++;

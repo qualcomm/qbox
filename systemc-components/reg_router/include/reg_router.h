@@ -201,6 +201,9 @@ public:
     }
 #endif
 
+    // Priority semantics match router.h: lower numeric value = higher priority
+    // (0 is strongest, default when unset). Callbacks fan out to all peers at
+    // the strongest priority; equal-priority mem targets are a fatal collision.
     bool do_callbacks(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
     {
         if (cb_targets.empty()) {
@@ -208,32 +211,35 @@ public:
         }
 
         sc_dt::uint64 addr = trans.get_address();
-        sc_dt::uint64 len = trans.get_data_length();
-        std::shared_ptr<target_info> ti; // Use shared_ptr
 
-        auto search = cb_targets.equal_range(addr);
-        if (search.first != cb_targets.end() && search.first->first == addr) {
-            if ((addr - search.first->first) < search.first->second->size) {
-                ti = search.first->second;
+        std::vector<std::shared_ptr<target_info>> claimants;
+        uint32_t best_prio = 0;
+        for (auto& kv : cb_targets) {
+            const auto& cand = kv.second;
+            if (!cand->claims(addr)) continue;
+            if (claimants.empty() || cand->priority < best_prio) {
+                claimants.clear();
+                claimants.push_back(cand);
+                best_prio = cand->priority;
+            } else if (cand->priority == best_prio) {
+                claimants.push_back(cand);
             }
-        } else if (search.second != cb_targets.begin()) {
-            auto expected_node = std::prev(search.second);
-            if ((addr - expected_node->first) < expected_node->second->size) {
-                ti = expected_node->second;
-            } else {
-                return false;
-            }
-        } else {
-            return false;
         }
-        SCP_TRACEALL(()) << "call b_transport: " << txn_to_str(trans, true, true);
-        if (ti->use_offset) trans.set_address(addr - ti->address);
-        initiator_socket[ti->index]->b_transport(trans, delay);
-        if (ti->use_offset) trans.set_address(addr);
-        SCP_TRACEALL(()) << "b_transport returned : " << txn_to_str(trans, true, true);
-        if (trans.get_response_status() <= tlm::TLM_GENERIC_ERROR_RESPONSE) {
-            SCP_WARN(()) << "Accesing register callback at addr: " << std::hex << addr
-                         << " returned with: " << trans.get_response_string();
+
+        if (claimants.empty()) return false;
+
+        for (const auto& ti : claimants) {
+            SCP_TRACEALL(()) << "call b_transport (fan-out prio " << best_prio
+                             << "): " << txn_to_str(trans, true, true);
+            if (ti->use_offset) trans.set_address(addr - ti->address);
+            initiator_socket[ti->index]->b_transport(trans, delay);
+            if (ti->use_offset) trans.set_address(addr);
+            SCP_TRACEALL(()) << "b_transport returned : " << txn_to_str(trans, true, true);
+            if (trans.get_response_status() <= tlm::TLM_GENERIC_ERROR_RESPONSE) {
+                SCP_WARN(()) << "Accesing register callback at addr: " << std::hex << addr << " (target " << ti->name
+                             << ") returned with: " << trans.get_response_string();
+                break;
+            }
         }
         return true;
     }
@@ -243,14 +249,16 @@ public:
         lazy_initialize();
 
         sc_dt::uint64 addr = trans.get_address();
-        sc_dt::uint64 len = trans.get_data_length();
 
-        for (auto ti : mem_targets) { // Iterate over shared_ptrs
-            if (addr >= ti->address && (addr - ti->address) < ti->size) {
-                return ti;
-            }
+        std::shared_ptr<target_info> best;
+        for (auto& ti : mem_targets) {
+            if (!ti->claims(addr)) continue;
+            if (!best || ti->priority < best->priority)
+                best = ti;
+            else if (ti->priority == best->priority && ti != best)
+                SCP_FATAL(()) << "Two targets with equal priority both claim address 0x" << std::hex << addr;
         }
-        return nullptr;
+        return best;
     }
 
 protected:
@@ -260,6 +268,44 @@ protected:
     }
 
 protected:
+    static std::vector<sc_dt::uint64> parse_u64_csv(const std::string& s)
+    {
+        std::vector<sc_dt::uint64> out;
+        size_t i = 0;
+        while (i < s.size()) {
+            while (i < s.size() && (s[i] == ' ' || s[i] == ',')) ++i;
+            if (i >= s.size()) break;
+            size_t consumed = 0;
+            sc_dt::uint64 v = std::stoull(s.substr(i), &consumed, 0);
+            out.push_back(v);
+            i += consumed;
+        }
+        return out;
+    }
+
+    // Walk a's element grid and return true iff any byte of an element is claimed by b.
+    // O(prod(a.counts) * elem_size) at bind time; fine at elaboration.
+    static bool banks_element_overlap(const std::shared_ptr<target_info>& a, const std::shared_ptr<target_info>& b)
+    {
+        const auto& s = a->dim_strides.empty() ? std::vector<sc_dt::uint64>{ a->stride } : a->dim_strides;
+        const auto& c = a->dim_counts.empty() ? std::vector<sc_dt::uint64>{ 1 } : a->dim_counts;
+        std::vector<size_t> idx(s.size(), 0);
+        while (true) {
+            sc_dt::uint64 off = 0;
+            for (size_t k = 0; k < s.size(); k++) off += idx[k] * s[k];
+            for (sc_dt::uint64 byte = 0; byte < a->elem_size; byte++) {
+                if (b->claims(a->address + off + byte)) return true;
+            }
+            size_t k = s.size();
+            while (k-- > 0) {
+                if (++idx[k] < c[k]) break;
+                idx[k] = 0;
+                if (k == 0) return false;
+            }
+            if (k == (size_t)-1) return false;
+        }
+    }
+
     void lazy_initialize() override
     {
         if (initialized) return;
@@ -273,28 +319,47 @@ protected:
             ti_ptr->size = gs::cci_get<uint64_t>(m_broker, name + ".size");
             ti_ptr->use_offset = gs::cci_get_d<bool>(m_broker, name + ".relative_addresses", true);
             ti_ptr->is_callback = gs::cci_get_d<bool>(m_broker, name + ".is_callback", false);
-            ti_ptr->priority = gs::cci_get_d<uint32_t>(m_broker, name + ".priority", 0); // Added missing priority
+            ti_ptr->priority = gs::cci_get_d<uint32_t>(m_broker, name + ".priority", 0);
+            ti_ptr->stride = gs::cci_get_d<uint64_t>(m_broker, name + ".stride", 0);
+            ti_ptr->elem_size = gs::cci_get_d<uint64_t>(m_broker, name + ".elem_size", 0);
 
-            SCP_INFO(()) << "Address map " << ti_ptr->name + " at" << " address "
-                         << "0x" << std::hex << ti_ptr->address << " size "
-                         << "0x" << std::hex << ti_ptr->size << (ti_ptr->use_offset ? " (with relative address) " : "")
+            std::string strides_str = gs::cci_get_d<std::string>(m_broker, name + ".dim_strides", std::string());
+            std::string counts_str = gs::cci_get_d<std::string>(m_broker, name + ".dim_counts", std::string());
+            if (!strides_str.empty() && !counts_str.empty()) {
+                ti_ptr->dim_strides = parse_u64_csv(strides_str);
+                ti_ptr->dim_counts = parse_u64_csv(counts_str);
+                if (ti_ptr->dim_strides.size() != ti_ptr->dim_counts.size())
+                    SCP_FATAL(()) << name << " has mismatched dim_strides / dim_counts";
+            }
+
+            SCP_INFO(()) << "Address map " << ti_ptr->name + " at" << " address " << "0x" << std::hex << ti_ptr->address
+                         << " size " << "0x" << std::hex << ti_ptr->size
+                         << (ti_ptr->stride ? " stride 0x" + std::to_string(ti_ptr->stride) : "")
+                         << (ti_ptr->dim_strides.empty() ? "" : (" dims=" + std::to_string(ti_ptr->dim_strides.size())))
+                         << (ti_ptr->use_offset ? " (with relative address) " : "")
                          << (ti_ptr->is_callback ? " (callback) " : "");
 
             if (ti_ptr->is_callback) {
-                auto insertion_pair = cb_targets.insert(std::make_pair(ti_ptr->address, ti_ptr)); // Insert shared_ptr
-                if (!insertion_pair.second)
-                    SCP_FATAL(()) << "a CB register with the same adress: 0x" << std::hex << ti_ptr->address
-                                  << " was already bound!";
+                cb_targets.insert(std::make_pair(ti_ptr->address, ti_ptr));
             } else {
                 if (!mem_targets.empty()) {
-                    for (const auto& mem : mem_targets) { // Iterate over shared_ptrs
-                        if (((ti_ptr->address >= mem->address) && ((ti_ptr->address - mem->address) < mem->size)) ||
-                            ((ti_ptr->address < mem->address) && ((ti_ptr->address + ti_ptr->size) > mem->address))) {
+                    for (const auto& mem : mem_targets) {
+                        bool overlaps_range = ((ti_ptr->address >= mem->address) &&
+                                               ((ti_ptr->address - mem->address) < mem->size)) ||
+                                              ((ti_ptr->address < mem->address) &&
+                                               ((ti_ptr->address + ti_ptr->size) > mem->address));
+                        if (!overlaps_range) continue;
+
+                        bool ti_gapped = ti_ptr->stride != 0 || !ti_ptr->dim_strides.empty();
+                        bool mem_gapped = mem->stride != 0 || !mem->dim_strides.empty();
+                        if (!ti_gapped || !mem_gapped) {
                             SCP_WARN(()) << ti_ptr->name << " overlaps with " << mem->name;
+                        } else if (banks_element_overlap(ti_ptr, mem)) {
+                            SCP_WARN(()) << ti_ptr->name << " element footprint overlaps with " << mem->name;
                         }
                     }
                 }
-                mem_targets.push_back(ti_ptr); // Add shared_ptr
+                mem_targets.push_back(ti_ptr);
             }
         }
     }
@@ -338,7 +403,7 @@ public:
 
 private:
     std::vector<std::shared_ptr<target_info>> mem_targets;
-    std::map<sc_dt::uint64, std::shared_ptr<target_info>> cb_targets;
+    std::multimap<sc_dt::uint64, std::shared_ptr<target_info>> cb_targets;
     std::map<uint64_t, std::pair<uint64_t, std::string>> mod_addr_name_map;
     std::function<void(bool, uint64_t)> m_pre_b_transport_callback;
     bool initialized = false;
