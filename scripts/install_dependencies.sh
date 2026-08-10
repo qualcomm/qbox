@@ -18,19 +18,19 @@ if { [ -e /etc/os-release ] && OS_RELEASE="/etc/os-release"; } || \
 
         if [ "${VERSION_ID}" = "24.04" ]; then
             apt install cmake g++ gcc git libasio-dev libelf-dev libepoxy-dev \
-                libglib2.0-dev libjpeg-dev libpixman-1-dev libsdl2-dev \
+                libglib2.0-dev libjpeg-turbo8-dev libpixman-1-dev libsdl2-dev \
                 libslirp-dev libasio-dev  libvirglrenderer-dev libzip-dev \
                 lld llvm meson ninja-build ocl-icd-opencl-dev python3 python3-dev \
                 python3-venv
         elif [ "${VERSION_ID}" = "22.04" ]; then
             apt install cmake g++ gcc git libasio-dev libelf-dev libepoxy-dev \
-                libglib2.0-dev libjpeg-dev libpixman-1-dev libsdl2-dev \
+                libglib2.0-dev libjpeg-turbo8-dev libpixman-1-dev libsdl2-dev \
                 libslirp-dev libasio-dev libvirglrenderer-dev libzip-dev \
                 lld llvm meson ninja-build ocl-icd-opencl-dev python3 python3-dev \
                 python3-tomli python3-venv
         elif [ "${VERSION_ID}" = "20.04" ]; then
             apt install cmake g++ gcc git libasio-dev libelf-dev libepoxy-dev \
-                libglib2.0-dev libjpeg-dev libpixman-1-dev libsdl2-dev \
+                libglib2.0-dev libjpeg-turbo8-dev libpixman-1-dev libsdl2-dev \
                 libslirp-dev libasio-dev libvirglrenderer-dev libzip-dev \
                 lld llvm meson ninja-build ocl-icd-opencl-dev python3 python3-dev \
                 python3-pip python3-venv
@@ -56,11 +56,11 @@ else
             readonly MAJOR_VERSION
 
             if [ "${MAJOR_VERSION}" = "26" ]; then
-                brew install asio bison cmake jpeg libelf libslirp libzip \
+                brew install asio bison cmake jpeg-turbo libelf libslirp libzip \
                     lld llvm meson ninja python3 sdl2
                 pip install --user pexpect numpy
             elif [ "${MAJOR_VERSION}" = "15" ]; then
-                brew install asio bison cmake jpeg libelf libslirp libzip \
+                brew install asio bison cmake jpeg-turbo libelf libslirp libzip \
                     lld llvm meson ninja python3 sdl2
                 pip install --user pexpect numpy
             else
