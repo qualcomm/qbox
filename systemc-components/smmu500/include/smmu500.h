@@ -122,20 +122,20 @@ private:
 
     void smmu500_update_ctx_irq(unsigned int cb)
     {
-        bool tf = SMMU_CB_FSR[cb][CB_FSR_TF];
-        bool ie = SMMU_CB_SCTLR[cb][CB_SCTLR_CFIE];
+        bool tf = (*SMMU_CB_FSR[cb])[CB_FSR_TF];
+        bool ie = (*SMMU_CB_SCTLR[cb])[CB_SCTLR_CFIE];
         irq_context[cb]->write(tf && ie);
     }
 
     void smmu500_fault(unsigned int cb, TransReq* req, uint64_t syn)
     {
-        SMMU_CB_FSR[cb][CB_FSR_TF] = 1;
+        (*SMMU_CB_FSR[cb])[CB_FSR_TF] = 1;
         req->err = true;
-        SMMU_CB_IPAFAR_LOW[cb] = (uint32_t)req->va;
-        SMMU_CB_IPAFAR_HIGH[cb] = (uint32_t)(req->va >> 32);
+        *SMMU_CB_IPAFAR_LOW[cb] = (uint32_t)req->va;
+        *SMMU_CB_IPAFAR_HIGH[cb] = (uint32_t)(req->va >> 32);
         if (req->stage == 2) {
-            SMMU_CB_FAR_LOW[cb] = (uint32_t)req->va;
-            SMMU_CB_FAR_HIGH[cb] = (uint32_t)(req->va >> 32);
+            *SMMU_CB_FAR_LOW[cb] = (uint32_t)req->va;
+            *SMMU_CB_FAR_HIGH[cb] = (uint32_t)(req->va >> 32);
         }
         smmu500_update_ctx_irq(cb);
     }
@@ -193,18 +193,18 @@ private:
     void dump_cb_state(unsigned int cb)
     {
         SCP_DEBUG(()) << "CB" << cb << ":\n"
-                      << std::hex << "CB_SCTLR = 0x" << (uint32_t)SMMU_CB_SCTLR[cb] << "\n"
-                      << "CB_TCR2 = 0x" << (uint32_t)SMMU_CB_TCR2[cb] << "\n"
-                      << "CB_TTBR0_LOW = 0x" << (uint32_t)SMMU_CB_TTBR0_LOW[cb] << "\n"
-                      << "CB_TTBR0_HIGH = 0x" << (uint32_t)SMMU_CB_TTBR0_HIGH[cb] << "\n"
-                      << "CB_TTBR1_LOW = 0x" << (uint32_t)SMMU_CB_TTBR1_LOW[cb] << "\n"
-                      << "CB_TTBR1_HIGH = 0x" << (uint32_t)SMMU_CB_TTBR1_HIGH[cb] << "\n"
-                      << "CB_TCR_LPAE = 0x" << (uint32_t)SMMU_CB_TCR_LPAE[cb] << "\n"
-                      << "CB_FSR = 0x" << (uint32_t)SMMU_CB_FSR[cb] << "\n"
-                      << "CB_FAR_LOW = 0x" << (uint32_t)SMMU_CB_FAR_LOW[cb] << "\n"
-                      << "CB_FAR_HIGH = 0x" << (uint32_t)SMMU_CB_FAR_HIGH[cb] << "\n"
-                      << "CB_IPAFAR_LOW = 0x" << (uint32_t)SMMU_CB_IPAFAR_LOW[cb] << "\n"
-                      << "CB_IPAFAR_HIGH = 0x" << (uint32_t)SMMU_CB_IPAFAR_HIGH[cb] << "\n";
+                      << std::hex << "CB_SCTLR = 0x" << (uint32_t)*SMMU_CB_SCTLR[cb] << "\n"
+                      << "CB_TCR2 = 0x" << (uint32_t)*SMMU_CB_TCR2[cb] << "\n"
+                      << "CB_TTBR0_LOW = 0x" << (uint32_t)*SMMU_CB_TTBR0_LOW[cb] << "\n"
+                      << "CB_TTBR0_HIGH = 0x" << (uint32_t)*SMMU_CB_TTBR0_HIGH[cb] << "\n"
+                      << "CB_TTBR1_LOW = 0x" << (uint32_t)*SMMU_CB_TTBR1_LOW[cb] << "\n"
+                      << "CB_TTBR1_HIGH = 0x" << (uint32_t)*SMMU_CB_TTBR1_HIGH[cb] << "\n"
+                      << "CB_TCR_LPAE = 0x" << (uint32_t)*SMMU_CB_TCR_LPAE[cb] << "\n"
+                      << "CB_FSR = 0x" << (uint32_t)*SMMU_CB_FSR[cb] << "\n"
+                      << "CB_FAR_LOW = 0x" << (uint32_t)*SMMU_CB_FAR_LOW[cb] << "\n"
+                      << "CB_FAR_HIGH = 0x" << (uint32_t)*SMMU_CB_FAR_HIGH[cb] << "\n"
+                      << "CB_IPAFAR_LOW = 0x" << (uint32_t)*SMMU_CB_IPAFAR_LOW[cb] << "\n"
+                      << "CB_IPAFAR_HIGH = 0x" << (uint32_t)*SMMU_CB_IPAFAR_HIGH[cb] << "\n";
     }
 
     void dump_state()
@@ -250,11 +250,11 @@ private:
 
         req->err = false;
 
-        if (SMMU_CB_SCTLR[cb][CB_SCTLR_M] == 0) {
+        if ((*SMMU_CB_SCTLR[cb])[CB_SCTLR_M] == 0) {
             req->pa = req->va;
             req->prot = IOMMU_RW;
             SCP_INFO(()) << "SMMU disabled for context " << cb << " sctlr=0x" << std::hex
-                         << (uint32_t)SMMU_CB_SCTLR[cb];
+                         << (uint32_t)*SMMU_CB_SCTLR[cb];
             return;
         }
 
@@ -357,8 +357,8 @@ private:
                 s2req.va = descaddr;
                 smmu500_ptw64(s2req.s2_cb, &s2req);
                 if (s2req.err) {
-                    SMMU_CB_IPAFAR_LOW[cb] = (uint32_t)descaddr;
-                    SMMU_CB_IPAFAR_HIGH[cb] = (uint32_t)(descaddr >> 32);
+                    *SMMU_CB_IPAFAR_LOW[cb] = (uint32_t)descaddr;
+                    *SMMU_CB_IPAFAR_HIGH[cb] = (uint32_t)(descaddr >> 32);
                     goto do_fault;
                 }
                 descaddr = s2req.pa;
@@ -513,23 +513,23 @@ private:
         }
 
         req.va = va;
-        req.tcr[1] = (uint32_t)SMMU_CB_TCR2[cb];
+        req.tcr[1] = (uint32_t)*SMMU_CB_TCR2[cb];
         req.tcr[1] <<= 32;
-        req.tcr[1] |= (uint32_t)SMMU_CB_TCR_LPAE[cb];
+        req.tcr[1] |= (uint32_t)*SMMU_CB_TCR_LPAE[cb];
 
-        req.ttbr[1][0] = (uint32_t)SMMU_CB_TTBR0_HIGH[cb];
+        req.ttbr[1][0] = (uint32_t)*SMMU_CB_TTBR0_HIGH[cb];
         req.ttbr[1][0] <<= 32;
-        req.ttbr[1][0] |= (uint32_t)SMMU_CB_TTBR0_LOW[cb];
+        req.ttbr[1][0] |= (uint32_t)*SMMU_CB_TTBR0_LOW[cb];
 
-        req.ttbr[1][1] = (uint32_t)SMMU_CB_TTBR1_HIGH[cb];
+        req.ttbr[1][1] = (uint32_t)*SMMU_CB_TTBR1_HIGH[cb];
         req.ttbr[1][1] <<= 32;
-        req.ttbr[1][1] |= (uint32_t)SMMU_CB_TTBR1_LOW[cb];
+        req.ttbr[1][1] |= (uint32_t)*SMMU_CB_TTBR1_LOW[cb];
 
         if (req.s2_enabled) {
-            req.tcr[2] = (uint32_t)SMMU_CB_TCR_LPAE[s2_cb];
-            req.ttbr[2][0] = (uint32_t)SMMU_CB_TTBR0_HIGH[s2_cb];
+            req.tcr[2] = (uint32_t)*SMMU_CB_TCR_LPAE[s2_cb];
+            req.ttbr[2][0] = (uint32_t)*SMMU_CB_TTBR0_HIGH[s2_cb];
             req.ttbr[2][0] <<= 32;
-            req.ttbr[2][0] |= (uint32_t)SMMU_CB_TTBR0_LOW[s2_cb];
+            req.ttbr[2][0] |= (uint32_t)*SMMU_CB_TTBR0_LOW[s2_cb];
         }
 
         req.access = wr ? IOMMU_WO : IOMMU_RO;

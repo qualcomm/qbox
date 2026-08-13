@@ -17,7 +17,6 @@
 #include <tlm_sockets_buswidth.h>
 #include <string>
 #include <memory>
-#include <vector>
 
 namespace gs {
 template <unsigned int BUSWIDTH = DEFAULT_TLM_BUSWIDTH>
@@ -57,29 +56,6 @@ public:
         bool is_callback;
         bool chained;
         std::string shortname;
-        // 1D bank fields (used when dim_strides is empty).
-        // stride == 0 means plain range (scalar / contiguous register).
-        sc_dt::uint64 stride = 0;
-        sc_dt::uint64 elem_size = 0;
-        // N-D bank layout, outer dim first. Non-empty overrides the 1D fields.
-        std::vector<sc_dt::uint64> dim_strides;
-        std::vector<sc_dt::uint64> dim_counts;
-
-        bool claims(sc_dt::uint64 addr) const
-        {
-            if (addr < address || (addr - address) >= size) return false;
-            if (!dim_strides.empty()) {
-                sc_dt::uint64 r = addr - address;
-                for (size_t k = 0; k < dim_strides.size(); k++) {
-                    sc_dt::uint64 idx = r / dim_strides[k];
-                    if (idx >= dim_counts[k]) return false;
-                    r = r % dim_strides[k];
-                }
-                return r < elem_size;
-            }
-            if (stride == 0) return true;
-            return ((addr - address) % stride) < elem_size;
-        }
     };
 
     void rename_last(std::string s)

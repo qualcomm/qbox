@@ -8,7 +8,8 @@
 #define smmu500_gen_H
 
 #include <reg_model_maker/reg_model_maker.h>
-#include <cstdint>
+#include <vector>
+#include <memory>
 #include <string>
 
 namespace gs {
@@ -18,9 +19,6 @@ private:
     std::string m_name;
 
 public:
-    static constexpr uint32_t CB_BANK_COUNT = 128;
-    using reg_bank = gs::gs_register<gs::gs_bank_of<uint32_t>>;
-
     gs::gs_register<uint32_t> SMMU_SCR0;
     gs::gs_field<uint32_t> SCR0_CLIENTPD;
     gs::gs_register<uint32_t> SMMU_NSCR0;
@@ -60,29 +58,29 @@ public:
     gs::gs_register<uint32_t> SMMU_GPAR;
     gs::gs_register<uint32_t> SMMU_GPAR_H;
     gs::gs_register<uint32_t> SMMU_TBU_PWR_STATUS;
-    reg_bank SMMU_CB_SCTLR;
-    reg_bank SMMU_CB_ACTLR;
-    reg_bank SMMU_CB_RESUME;
-    reg_bank SMMU_CB_TCR2;
-    reg_bank SMMU_CB_TTBR0_LOW;
-    reg_bank SMMU_CB_TTBR0_HIGH;
-    reg_bank SMMU_CB_TTBR1_LOW;
-    reg_bank SMMU_CB_TTBR1_HIGH;
-    reg_bank SMMU_CB_TCR_LPAE;
-    reg_bank SMMU_CB_CONTEXTIDR;
-    reg_bank SMMU_CB_PRRR_MAIR0;
-    reg_bank SMMU_CB_NMRR_MAIR1;
-    reg_bank SMMU_CB_FSR;
-    reg_bank SMMU_CB_FSRRESTORE;
-    reg_bank SMMU_CB_FAR_LOW;
-    reg_bank SMMU_CB_FAR_HIGH;
-    reg_bank SMMU_CB_FSYNR0;
-    reg_bank SMMU_CB_IPAFAR_LOW;
-    reg_bank SMMU_CB_IPAFAR_HIGH;
-    reg_bank SMMU_CB_TLBIASID;
-    reg_bank SMMU_CB_TLBIALL;
-    reg_bank SMMU_CB_TLBSYNC;
-    reg_bank SMMU_CB_TLBSTATUS;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_SCTLR;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_ACTLR;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_RESUME;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_TCR2;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_TTBR0_LOW;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_TTBR0_HIGH;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_TTBR1_LOW;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_TTBR1_HIGH;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_TCR_LPAE;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_CONTEXTIDR;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_PRRR_MAIR0;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_NMRR_MAIR1;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_FSR;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_FSRRESTORE;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_FAR_LOW;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_FAR_HIGH;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_FSYNR0;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_IPAFAR_LOW;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_IPAFAR_HIGH;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_TLBIASID;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_TLBIALL;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_TLBSYNC;
+    std::vector<std::shared_ptr<gs::gs_register<uint32_t>>> SMMU_CB_TLBSTATUS;
 
     /* CB register fields (parent reg is a placeholder for bit_start/bit_length only) */
     gs::gs_field<uint32_t> CB_SCTLR_M;
@@ -130,60 +128,10 @@ public:
         , SMMU_GPAR("SMMU_GPAR", "smmu500.SMMU_GPAR", 0x180, 1)
         , SMMU_GPAR_H("SMMU_GPAR_H", "smmu500.SMMU_GPAR_H", 0x184, 1)
         , SMMU_TBU_PWR_STATUS("SMMU_TBU_PWR_STATUS", "smmu500.SMMU_TBU_PWR_STATUS", 0x2204, 1)
-        , SMMU_CB_SCTLR("SMMU_CB_SCTLR", "smmu500.SMMU_CB_SCTLR", 0x000, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_ACTLR("SMMU_CB_ACTLR", "smmu500.SMMU_CB_ACTLR", 0x004, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_RESUME("SMMU_CB_RESUME", "smmu500.SMMU_CB_RESUME", 0x008, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_TCR2("SMMU_CB_TCR2", "smmu500.SMMU_CB_TCR2", 0x010, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_TTBR0_LOW("SMMU_CB_TTBR0_LOW", "smmu500.SMMU_CB_TTBR0_LOW", 0x020, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_TTBR0_HIGH("SMMU_CB_TTBR0_HIGH", "smmu500.SMMU_CB_TTBR0_HIGH", 0x024, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_TTBR1_LOW("SMMU_CB_TTBR1_LOW", "smmu500.SMMU_CB_TTBR1_LOW", 0x028, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_TTBR1_HIGH("SMMU_CB_TTBR1_HIGH", "smmu500.SMMU_CB_TTBR1_HIGH", 0x02C, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_TCR_LPAE("SMMU_CB_TCR_LPAE", "smmu500.SMMU_CB_TCR_LPAE", 0x030, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_CONTEXTIDR("SMMU_CB_CONTEXTIDR", "smmu500.SMMU_CB_CONTEXTIDR", 0x034, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_PRRR_MAIR0("SMMU_CB_PRRR_MAIR0", "smmu500.SMMU_CB_PRRR_MAIR0", 0x038, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_NMRR_MAIR1("SMMU_CB_NMRR_MAIR1", "smmu500.SMMU_CB_NMRR_MAIR1", 0x03C, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_FSR("SMMU_CB_FSR", "smmu500.SMMU_CB_FSR", 0x058, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_FSRRESTORE("SMMU_CB_FSRRESTORE", "smmu500.SMMU_CB_FSRRESTORE", 0x05C, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_FAR_LOW("SMMU_CB_FAR_LOW", "smmu500.SMMU_CB_FAR_LOW", 0x060, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_FAR_HIGH("SMMU_CB_FAR_HIGH", "smmu500.SMMU_CB_FAR_HIGH", 0x064, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_FSYNR0("SMMU_CB_FSYNR0", "smmu500.SMMU_CB_FSYNR0", 0x068, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_IPAFAR_LOW("SMMU_CB_IPAFAR_LOW", "smmu500.SMMU_CB_IPAFAR_LOW", 0x070, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_IPAFAR_HIGH("SMMU_CB_IPAFAR_HIGH", "smmu500.SMMU_CB_IPAFAR_HIGH", 0x074, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_TLBIASID("SMMU_CB_TLBIASID", "smmu500.SMMU_CB_TLBIASID", 0x610, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_TLBIALL("SMMU_CB_TLBIALL", "smmu500.SMMU_CB_TLBIALL", 0x618, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_TLBSYNC("SMMU_CB_TLBSYNC", "smmu500.SMMU_CB_TLBSYNC", 0x7F0, CB_BANK_COUNT, 0x1000ULL)
-        , SMMU_CB_TLBSTATUS("SMMU_CB_TLBSTATUS", "smmu500.SMMU_CB_TLBSTATUS", 0x7F4, CB_BANK_COUNT, 0x1000ULL)
         , CB_SCTLR_M(SMMU_SCR0, "CB_SCTLR.M", 0, 1)
         , CB_SCTLR_CFIE(SMMU_SCR0, "CB_SCTLR.CFIE", 6, 1)
         , CB_FSR_TF(SMMU_SGFSR, "CB_FSR.TF", 1, 1)
     {
-    }
-
-    void set_cb_bank_base(uint64_t base)
-    {
-        SMMU_CB_SCTLR.p_offset = base + 0x000;
-        SMMU_CB_ACTLR.p_offset = base + 0x004;
-        SMMU_CB_RESUME.p_offset = base + 0x008;
-        SMMU_CB_TCR2.p_offset = base + 0x010;
-        SMMU_CB_TTBR0_LOW.p_offset = base + 0x020;
-        SMMU_CB_TTBR0_HIGH.p_offset = base + 0x024;
-        SMMU_CB_TTBR1_LOW.p_offset = base + 0x028;
-        SMMU_CB_TTBR1_HIGH.p_offset = base + 0x02C;
-        SMMU_CB_TCR_LPAE.p_offset = base + 0x030;
-        SMMU_CB_CONTEXTIDR.p_offset = base + 0x034;
-        SMMU_CB_PRRR_MAIR0.p_offset = base + 0x038;
-        SMMU_CB_NMRR_MAIR1.p_offset = base + 0x03C;
-        SMMU_CB_FSR.p_offset = base + 0x058;
-        SMMU_CB_FSRRESTORE.p_offset = base + 0x05C;
-        SMMU_CB_FAR_LOW.p_offset = base + 0x060;
-        SMMU_CB_FAR_HIGH.p_offset = base + 0x064;
-        SMMU_CB_FSYNR0.p_offset = base + 0x068;
-        SMMU_CB_IPAFAR_LOW.p_offset = base + 0x070;
-        SMMU_CB_IPAFAR_HIGH.p_offset = base + 0x074;
-        SMMU_CB_TLBIASID.p_offset = base + 0x610;
-        SMMU_CB_TLBIALL.p_offset = base + 0x618;
-        SMMU_CB_TLBSYNC.p_offset = base + 0x7F0;
-        SMMU_CB_TLBSTATUS.p_offset = base + 0x7F4;
     }
 
     void bind_regs(gs::json_module& jm)
@@ -212,29 +160,6 @@ public:
         jm.bind_reg(SMMU_GPAR);
         jm.bind_reg(SMMU_GPAR_H);
         jm.bind_reg(SMMU_TBU_PWR_STATUS);
-        jm.bind_reg(SMMU_CB_SCTLR);
-        jm.bind_reg(SMMU_CB_ACTLR);
-        jm.bind_reg(SMMU_CB_RESUME);
-        jm.bind_reg(SMMU_CB_TCR2);
-        jm.bind_reg(SMMU_CB_TTBR0_LOW);
-        jm.bind_reg(SMMU_CB_TTBR0_HIGH);
-        jm.bind_reg(SMMU_CB_TTBR1_LOW);
-        jm.bind_reg(SMMU_CB_TTBR1_HIGH);
-        jm.bind_reg(SMMU_CB_TCR_LPAE);
-        jm.bind_reg(SMMU_CB_CONTEXTIDR);
-        jm.bind_reg(SMMU_CB_PRRR_MAIR0);
-        jm.bind_reg(SMMU_CB_NMRR_MAIR1);
-        jm.bind_reg(SMMU_CB_FSR);
-        jm.bind_reg(SMMU_CB_FSRRESTORE);
-        jm.bind_reg(SMMU_CB_FAR_LOW);
-        jm.bind_reg(SMMU_CB_FAR_HIGH);
-        jm.bind_reg(SMMU_CB_FSYNR0);
-        jm.bind_reg(SMMU_CB_IPAFAR_LOW);
-        jm.bind_reg(SMMU_CB_IPAFAR_HIGH);
-        jm.bind_reg(SMMU_CB_TLBIASID);
-        jm.bind_reg(SMMU_CB_TLBIALL);
-        jm.bind_reg(SMMU_CB_TLBSYNC);
-        jm.bind_reg(SMMU_CB_TLBSTATUS);
         jm.log_end_of_binding_msg(m_name);
     }
 };
