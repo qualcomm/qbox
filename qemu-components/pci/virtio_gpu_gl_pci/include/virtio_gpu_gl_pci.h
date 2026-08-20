@@ -19,8 +19,6 @@ private:
     static constexpr const char* _device_type = "virtio-gpu-gl-pci";
 
 public:
-    cci::cci_param<uint64_t> p_hostmem_mb;
-
     virtio_gpu_gl_pci(const sc_core::sc_module_name& name, sc_core::sc_object* o, sc_core::sc_object* t);
     virtio_gpu_gl_pci(const sc_core::sc_module_name& name, QemuInstance& inst, qemu_gpex* gpex);
 

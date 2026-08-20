@@ -335,7 +335,8 @@ public:
                 i_obj, t_obj)) ||
             (try_bind<sc_core::sc_port<sc_core::sc_signal_inout_if<bool>, 0, sc_core::SC_ZERO_OR_MORE_BOUND>,
                       TargetSignalSocket<bool>>(i_obj, t_obj)) ||
-            (try_bind<InitiatorSignalSocket<bool>, TargetSignalSocket<bool>>(i_obj, t_obj))
+            (try_bind<InitiatorSignalSocket<bool>, TargetSignalSocket<bool>>(i_obj, t_obj)) ||
+            (try_bind<InitiatorSignalSocket<uint32_t>, TargetSignalSocket<uint32_t>>(i_obj, t_obj))
 #ifndef WITHOUT_QEMU
             ||
             (try_bind<QemuInitiatorSocket<BIND_BUSWIDTH>, tlm::tlm_base_target_socket<BIND_BUSWIDTH>>(i_obj, t_obj)) ||

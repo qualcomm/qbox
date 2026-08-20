@@ -25,7 +25,7 @@ add_executable(
 target_link_libraries(
     ${HEXAGON_STANDALONE_TEST_NAME}
     PRIVATE
-    ${TARGET_LIBS}
+    qbox-common
     gs_memory
     router
     qemu_cpu_hexagon

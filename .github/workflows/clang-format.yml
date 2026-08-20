@@ -13,7 +13,9 @@ jobs:
         run: sudo apt install clang-format
 
       - name: Fetch target branch
-        run: git fetch origin "${{ github.base_ref }}"
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git fetch origin "$BASE_REF"
 
       - name: Run clang-format
         run: |

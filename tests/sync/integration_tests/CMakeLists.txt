@@ -5,7 +5,7 @@ add_executable(checker main.cc)
 #)
 target_link_libraries(checker
    PRIVATE
-      ${TARGET_LIBS}
+      qbox-common
       router
       realtimelimiter
 )

@@ -1,6 +1,6 @@
 macro(gs_add_test test)
     add_executable(${test} ${test}.cc)
-    target_link_libraries(${test} PRIVATE gtest gmock router gs_memory ${TARGET_LIBS})
+     target_link_libraries(${test} PRIVATE gtest gmock router gs_memory qbox-common)
     add_test(NAME ${test} COMMAND ${test} --gs_luafile ${CMAKE_CURRENT_SOURCE_DIR}/conf-test.lua)
 
     if (GS_ENABLE_SANITIZERS)

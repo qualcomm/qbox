@@ -91,6 +91,8 @@ file(
 include(${CMAKE_CURRENT_BINARY_DIR}/cmake/CPM.cmake)
 include(${PROJECT_SOURCE_DIR}/cmake/boilerplate.cmake)
 
+add_library(qbox-common INTERFACE)
+
 # Allow using package-lock.cmake files in projects using this boilerplate to
 # pin repos, etc.
 CPMUsePackageLock(${PKG_LOCK})
@@ -337,7 +339,7 @@ if (NOT WITHOUT_QEMU)
     )
 
     if(TARGET libqemu)
-        list(APPEND TARGET_LIBS "libqemu")
+        target_link_libraries(qbox-common INTERFACE libqemu)
     endif()
 
     target_include_directories(
@@ -392,22 +394,18 @@ target_include_directories(
     ${PROJECT_NAME} PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/systemc-components/common/include>
     $<INSTALL_INTERFACE:systemc-components/common/include>
-)
-
-# reg_model_maker.cc (compiled into the core qbox library) includes
-# <gs_memory.h>, <router.h> and <reg_router.h>, which live in their
-# respective component include dirs. These are only needed to build the
-# in-tree source, so BUILD_INTERFACE is sufficient (the header is consumed
-# externally only by the smmu* dymods, which already link these targets).
-target_include_directories(
-    ${PROJECT_NAME} PRIVATE
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/systemc-components/gs_memory/include>
+    $<INSTALL_INTERFACE:systemc-components/gs_memory/include>
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/systemc-components/router/include>
+    $<INSTALL_INTERFACE:systemc-components/router/include>
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/systemc-components/reg_router/include>
+    $<INSTALL_INTERFACE:systemc-components/reg_router/include>
 )
 
 target_link_libraries(${PROJECT_NAME} PUBLIC
-        ${TARGET_LIBS}
+        SystemC::systemc
+        SystemC::cci-config
+        scp::reporting
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -458,14 +456,11 @@ install(FILES
     DESTINATION lib/cmake/qbox-${PROJECT_VERSION}
 )
 
-list(APPEND TARGET_LIBS "qbox::${PROJECT_NAME}")
-set(TARGET_LIBS "${TARGET_LIBS}" CACHE INTERNAL "target_libs")
-
 if (NOT DEFINED GS_ONLY)
     install(TARGETS rpc)
 endif()
 
-list(APPEND TARGET_LIBS ${PROJECT_NAME})
+target_link_libraries(qbox-common INTERFACE ${PROJECT_NAME})
 
 if(NOT WITHOUT_QEMU)
     add_subdirectory(qemu-components)
