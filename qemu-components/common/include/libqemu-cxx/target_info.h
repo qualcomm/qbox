@@ -12,6 +12,7 @@ namespace qemu {
 
 enum Target {
     AARCH64,
+    ARM,
     RISCV64,
     RISCV32,
     MICROBLAZE,
