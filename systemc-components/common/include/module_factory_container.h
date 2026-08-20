@@ -95,7 +95,14 @@ public:
                 SC_REPORT_ERROR("ModuleFactory", ("Null module type: " + moduletype).c_str());
             }
         } else {
-            SC_REPORT_ERROR("ModuleFactory", ("Can't find module type: " + moduletype).c_str());
+            SC_REPORT_ERROR("ModuleFactory",
+                            ("Can't find module type: " + moduletype +
+                             ". If this module should be loaded from a shared library, check that the library "
+                             "exports the registration hook as extern \"C\" void module_register() (without "
+                             "extern \"C\" the symbol is mangled and cannot be found), and that the hook "
+                             "registers the type '" +
+                             moduletype + "'")
+                                .c_str());
         }
         __builtin_unreachable();
     }
@@ -953,7 +960,10 @@ public:
             module_register = reinterpret_cast<void (*)()>(libraryHandle->get_symbol("module_register"));
             module_register();
         } else {
-            SCP_WARN(()) << "module_register not found in library " << libname;
+            SCP_WARN(()) << "module_register not found in library " << libname
+                         << ": no module type can be registered from it. Check that the hook is declared with C "
+                            "linkage: extern \"C\" void module_register(); (without extern \"C\" the symbol is "
+                            "mangled and cannot be resolved by name)";
         }
     }
 
