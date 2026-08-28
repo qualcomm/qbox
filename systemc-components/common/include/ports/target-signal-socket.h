@@ -1,9 +1,7 @@
 /*
- * This file is part of libgsutils
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All Rights Reserved.
- * Author: GreenSocs 2022
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
- * SPDX-License-Identifier: BSD-3-Clause
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
 #ifndef _LIBGSUTILS_PORTS_TARGET_SIGNAL_SOCKET_H
@@ -32,7 +30,7 @@ protected:
     gs::async_event m_ev;
 
 public:
-    TargetSignalSocketProxy(TargetSignalSocket<T>& parent): m_parent(parent), m_cb(nullptr), m_ev(false) {}
+    TargetSignalSocketProxy(TargetSignalSocket<T>& parent): m_parent(parent), m_val{}, m_cb(nullptr), m_ev(false) {}
 
     void register_value_changed_cb(const ValueChangedCallback& cb) { m_cb = cb; }
 

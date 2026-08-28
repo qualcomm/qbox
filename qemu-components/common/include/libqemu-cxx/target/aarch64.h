@@ -1,9 +1,7 @@
 /*
- * This file is part of libqemu-cxx
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All Rights Reserved.
- * Author: GreenSocs 2015-2019
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
- * SPDX-License-Identifier: BSD-3-Clause
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
 #pragma once
@@ -23,6 +21,7 @@ public:
 
     void set_cp15_cbar(uint64_t cbar);
     void set_imp_buildoptr(uint32_t imp_buildoptr);
+    void set_rvbar(uint64_t rvbar);
     void add_nvic_link();
 
     uint64_t get_exclusive_addr() const;

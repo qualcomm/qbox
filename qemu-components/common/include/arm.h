@@ -1,9 +1,7 @@
 /*
- * This file is part of libqbox
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All Rights Reserved.
- * Author: GreenSocs 2020
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
- * SPDX-License-Identifier: BSD-3-Clause
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
 #pragma once
@@ -27,15 +25,25 @@ public:
     QemuInitiatorSocket<> secure_mem;
     TargetSignalSocket<bool> power_on;
 
+    /*
+     * RVBARADDR reset-vector input. A write sets the address the core starts
+     * at on its next reset (for example a power_on request); a running core
+     * is not affected. A power controller drives this before releasing the
+     * core, as on hardware.
+     */
+    TargetSignalSocket<uint64_t> rvbar_in;
+
     QemuCpuArm(const sc_core::sc_module_name& name, QemuInstance& inst, const std::string& type_name,
                const char* cpu_type = nullptr)
         : QemuCpu(name, inst, type_name, cpu_type)
         , p_has_secure_memory("has_secure_memory", false, "Use a separate QEMU secure-memory address space")
         , secure_mem("secure_mem", *this, inst)
         , power_on("power_on")
+        , rvbar_in("rvbar_in")
     {
         auto poweroncb = std::bind(&QemuCpuArm::power_on_cb, this, std::placeholders::_1);
         power_on.register_value_changed_cb(poweroncb);
+        rvbar_in.register_value_changed_cb([this](const uint64_t& rvbar) { get_cpu_aarch64().set_rvbar(rvbar); });
     }
 
     /// @returns a new `CpuAarch64` wrapper around `m_cpu`. While this looks like

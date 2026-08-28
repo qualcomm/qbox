@@ -1,9 +1,7 @@
 /*
- * This file is part of libqemu-cxx
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All Rights Reserved.
- * Author: GreenSocs 2015-2019
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
- * SPDX-License-Identifier: BSD-3-Clause
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
 #include <libqemu/libqemu.h>
@@ -31,6 +29,8 @@ void CpuArm::set_exclusive_val(uint64_t val) { m_int->exports().cpu_arm_set_excl
 void CpuArm::post_init() { m_int->exports().cpu_arm_post_init(m_obj); }
 
 void CpuArm::register_reset() { m_int->exports().cpu_arm_register_reset(m_obj); }
+
+void CpuArm::set_rvbar(uint64_t rvbar) { m_int->exports().cpu_arm_set_rvbar(m_obj, rvbar); }
 
 int CpuArm::arm_set_cpu_on_and_reset() { return m_int->exports().cpu_arm_set_cpu_on_and_reset(m_obj); }
 
