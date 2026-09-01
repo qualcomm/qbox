@@ -108,8 +108,23 @@ void MainThreadQemuDisplay::window_create(DisplayChangeListener* dcl)
 {
     qemu::LibQemu& lib = inst->get();
     MainThreadQemuDisplay* display = reinterpret_cast<MainThreadQemuDisplay*>(lib.dcl_new(dcl).get_user_data());
-    // SDL2 window create should run on main-thread
-    display->m_on_sysc.fork_on_systemc([&lib, dcl]() { lib.sdl2_window_create(dcl); });
+
+    /*
+     * GL switch continues immediately with context and texture creation, so
+     * the macOS window must exist before the callback returns. During
+     * elaboration, keep the callback asynchronous to avoid the startup
+     * deadlock; once simulation is running, release BQL while synchronously
+     * rendezvousing with the SystemC thread.
+     */
+    if (display->m_simulation_started) {
+        lib.unlock_iothread();
+    }
+
+    display->m_on_sysc.run_on_sysc([&lib, dcl]() { lib.sdl2_window_create(dcl); }, display->m_simulation_started);
+
+    if (display->m_simulation_started) {
+        lib.lock_iothread();
+    }
 }
 
 void MainThreadQemuDisplay::window_destroy(DisplayChangeListener* dcl)
