@@ -17,6 +17,11 @@ option(GS_ENABLE_SCUDO "Enable Scudo allocator" OFF)
 option(GS_ENABLE_TSAN "Enable Thread Sanitizer" OFF)
 option(QEMU_ENABLE_USB_REDIRECT "enable qemu usb redirect" OFF)
 
+option(QBOX_ENABLE_CROW_ASIO "Build QBox with enabled Crow/asio" ON)
+option(QBOX_BUILD_TESTS "Build QBox unit tests" ON)
+set(QBOX_BUILD_RPATH   "" CACHE STRING "Additional RPATH entries while building QBox")
+set(QBOX_INSTALL_RPATH "" CACHE STRING "Additional RPATH entries for installed QBox binaries")
+
 option(ENABLE_PYTHON_BINDER "Enable python binder model" ON)
 option(WITHOUT_PYTHON_BINDER "[DEPRECATED] Use ENABLE_PYTHON_BINDER=OFF instead" OFF)
 
@@ -174,13 +179,24 @@ if(GS_ENABLE_AUTO_INIT)
 endif()
 # ##############################################################################
 
-if(APPLE)
-  set(CMAKE_BUILD_RPATH "\@executable_path/../lib;\@executable_path/../lib/libqemu")
-  set(CMAKE_INSTALL_RPATH "\@executable_path/../lib;\@executable_path/../lib/libqemu")
-else()
-  set(CMAKE_BUILD_RPATH "\$ORIGIN/../lib;\$ORIGIN/../lib/libqemu")
-  set(CMAKE_INSTALL_RPATH "\$ORIGIN/../lib;\$ORIGIN/../lib/libqemu")
+if(NOT QBOX_BUILD_RPATH STREQUAL "")
+  set(CMAKE_BUILD_RPATH "${QBOX_BUILD_RPATH}")
 endif()
+if(NOT QBOX_INSTALL_RPATH STREQUAL "")
+  set(CMAKE_INSTALL_RPATH "${QBOX_INSTALL_RPATH}")
+endif()
+
+if(APPLE)
+  list(APPEND CMAKE_BUILD_RPATH "\@executable_path/../lib;\@executable_path/../lib/libqemu")
+  list(APPEND CMAKE_INSTALL_RPATH "\@executable_path/../lib;\@executable_path/../lib/libqemu")
+else()
+  list(APPEND CMAKE_BUILD_RPATH "\$ORIGIN/../lib;\$ORIGIN/../lib/libqemu")
+  list(APPEND CMAKE_INSTALL_RPATH "\$ORIGIN/../lib;\$ORIGIN/../lib/libqemu")
+endif()
+list(REMOVE_DUPLICATES CMAKE_BUILD_RPATH)
+list(REMOVE_DUPLICATES CMAKE_INSTALL_RPATH)
+message(STATUS "CMAKE_BUILD_RPATH =   ${CMAKE_BUILD_RPATH}")
+message(STATUS "CMAKE_INSTALL_RPATH = ${CMAKE_INSTALL_RPATH}")
 
 list(APPEND CMAKE_BUILD_RPATH
     "${CMAKE_BINARY_DIR}/_deps/libqemu-build/qemu-prefix/lib/"
@@ -214,7 +230,9 @@ pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
 pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0)
 
 # CPM packages (fetched from source)
-gs_addexpackage("gh:google/googletest#v1.15.2")
+if(QBOX_BUILD_TESTS)
+    gs_addexpackage("gh:google/googletest#v1.15.2")
+endif()
 gs_addexpackage("gh:lua/lua#v5.4.2")
 
 find_package(Git QUIET)
@@ -245,7 +263,7 @@ gs_addexpackage(
 gs_systemc()
 
 # libasio-dev should be installed on the system
-if(NOT GS_ONLY)
+if(QBOX_ENABLE_CROW_ASIO AND NOT GS_ONLY)
     set(CROW_BUILD_EXAMPLES OFF CACHE STRING "Disable building Crow examples")
     set(DCROW_BUILD_TESTS OFF CACHE STRING "Disable building Crow tests")
     set(CROW_INSTALL ON CACHE STRING "Enable Crow install")
@@ -473,7 +491,9 @@ if(ENABLE_PYTHON_BINDER AND (NOT GS_ONLY))
 endif()
 add_subdirectory(html)
 
-gs_enable_testing()
+if(QBOX_BUILD_TESTS)
+    gs_enable_testing()
+endif()
 
 if(UNIX AND NOT APPLE)
     target_link_libraries(${PROJECT_NAME} INTERFACE rt)
