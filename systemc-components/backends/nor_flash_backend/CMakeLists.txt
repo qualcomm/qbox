@@ -1,0 +1,1 @@
+gs_create_dymod(nor_flash_backend)
