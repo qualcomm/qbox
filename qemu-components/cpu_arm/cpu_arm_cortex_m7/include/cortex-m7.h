@@ -16,26 +16,61 @@
 
 #include <armv7m-nvic.h>
 #include <arm.h>
+#include <ports/qemu-target-signal-socket.h>
 
 class cpu_arm_cortexM7 : public QemuCpuArm
 {
 public:
     cci::cci_param<bool> p_start_powered_off;
-    nvic_armv7m& m_nvic;
+    nvic_armv7m m_nvic;
     cci::cci_param<uint64_t> p_init_nsvtor;
+    cci::cci_param<uint64_t> p_pmsav7_dregion;
 
-    cpu_arm_cortexM7(const sc_core::sc_module_name& name, sc_core::sc_object* o, sc_core::sc_object* nvic)
-        : cpu_arm_cortexM7(name, *(dynamic_cast<QemuInstance*>(o)), *(dynamic_cast<nvic_armv7m*>(nvic)))
+    /* CPU IRQ input: m_nvic.irq_out (excpout) → irq_in → CPU ARM_CPU_IRQ */
+    QemuTargetSignalSocket irq_in;
+
+    /* Passthrough sockets: router → nvic_socket (target) → nvic_fwd (initiator) → m_nvic.socket */
+    tlm_utils::simple_target_socket<cpu_arm_cortexM7> nvic_socket;
+    tlm_utils::simple_initiator_socket<cpu_arm_cortexM7> nvic_fwd;
+
+    cpu_arm_cortexM7(const sc_core::sc_module_name& name, sc_core::sc_object* o)
+        : cpu_arm_cortexM7(name, *(dynamic_cast<QemuInstance*>(o)))
     {
     }
-    cpu_arm_cortexM7(sc_core::sc_module_name name, QemuInstance& inst, nvic_armv7m& nvic)
+    cpu_arm_cortexM7(sc_core::sc_module_name name, QemuInstance& inst)
         : QemuCpuArm(name, inst, "cortex-m7-arm")
-        , m_nvic(nvic)
+        , m_nvic("nvic", inst)
         , p_start_powered_off("start_powered_off", false,
                               "Start and reset the CPU "
                               "in powered-off state")
         , p_init_nsvtor("init_nsvtor", 0ull, "Reset vector base address")
+        , p_pmsav7_dregion("pmsav7_dregion", 8ull,
+                           "Number of PMSAv7 MPU data regions (default: 8)")
+        , irq_in("irq_in")
+        , nvic_socket("nvic_socket")
+        , nvic_fwd("nvic_fwd")
     {
+        /* Register forwarding callback */
+        nvic_socket.register_b_transport(this, &cpu_arm_cortexM7::nvic_b_transport);
+
+        /* Bind initiator socket to NVIC's target socket */
+        nvic_fwd.bind(m_nvic.socket);
+
+        /* Connect NVIC excpout to CPU ARM_CPU_IRQ */
+        m_nvic.irq_out.bind(irq_in);
+    }
+
+    /* Forward all NVIC register accesses from target socket to initiator socket */
+    void nvic_b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
+    {
+        uint64_t addr = trans.get_address();
+        // Convert the Cortex-M system-space address (0xE000xxxx) to the
+        // NVIC-local register offset expected by the QEMU device.
+        uint64_t offset = addr & 0xFFFF;
+
+        trans.set_address(offset);
+        nvic_fwd->b_transport(trans, delay);
+        trans.set_address(addr);
     }
 
     void before_end_of_elaboration() override
@@ -47,6 +82,7 @@ public:
         cpu.add_nvic_link();
         cpu.set_prop_bool("start-powered-off", p_start_powered_off);
         cpu.set_prop_int("init-nsvtor", p_init_nsvtor);
+        cpu.set_prop_int("pmsav7-dregion", p_pmsav7_dregion);
 
         /* ensure the nvic is also created */
         m_nvic.before_end_of_elaboration();
@@ -56,5 +92,14 @@ public:
         cpu.set_prop_link("nvic", nvic);
         nvic.set_prop_link("cpu", cpu);
     }
+
+    void end_of_elaboration() override
+    {
+        QemuCpuArm::end_of_elaboration();
+
+        /* Wire NVIC excpout to CPU ARM_CPU_IRQ (gpio input 0) */
+        irq_in.init(m_dev, 0);
+    }
+
 };
 extern "C" void module_register();
