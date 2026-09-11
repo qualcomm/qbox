@@ -7,7 +7,9 @@
 #ifndef _GREENSOCS_BASE_COMPONENTS_ADDRTR_H
 #define _GREENSOCS_BASE_COMPONENTS_ADDRTR_H
 
+#include <algorithm>
 #include <cinttypes>
+#include <limits>
 #include <vector>
 
 #include <systemc>
@@ -38,6 +40,40 @@ class addrtr : public sc_core::sc_module
 private:
     SCP_LOGGER();
 
+    bool range_end(sc_dt::uint64 start, sc_dt::uint64 size, sc_dt::uint64& end) const
+    {
+        if (size == 0 || start > std::numeric_limits<sc_dt::uint64>::max() - (size - 1)) {
+            return false;
+        }
+        end = start + size - 1;
+        return true;
+    }
+
+    bool map_window(sc_dt::uint64& start_addr, sc_dt::uint64& end_addr, unsigned char** dmi_ptr = nullptr)
+    {
+        sc_dt::uint64 mapped_end;
+        sc_dt::uint64 target_end;
+        const sc_dt::uint64 mapped_start = p_mapped_base_addr.get_value();
+        const sc_dt::uint64 target_start = m_base_addr;
+
+        if (!range_end(mapped_start, m_mapping_size, mapped_end) ||
+            !range_end(target_start, m_mapping_size, target_end) || end_addr < start_addr || end_addr < mapped_start ||
+            start_addr > mapped_end) {
+            return false;
+        }
+
+        const sc_dt::uint64 clipped_start = std::max(start_addr, mapped_start);
+        const sc_dt::uint64 clipped_end = std::min(end_addr, mapped_end);
+
+        if (dmi_ptr != nullptr && *dmi_ptr != nullptr) {
+            *dmi_ptr += clipped_start - start_addr;
+        }
+
+        start_addr = target_start + (clipped_start - mapped_start);
+        end_addr = target_start + (clipped_end - mapped_start);
+        return true;
+    }
+
     sc_dt::uint64 addr_fw(sc_dt::uint64 addr)
     {
         auto offset = addr - m_base_addr;
@@ -50,12 +86,18 @@ private:
         return m_base_addr + offset;
     }
 
-    uint64_t map_txn_addr(tlm::tlm_generic_payload& trans)
+    sc_dt::uint64 map_txn_addr(tlm::tlm_generic_payload& trans)
     {
-        uint64_t addr = trans.get_address();
-        uint64_t len = trans.get_data_length();
-        uint64_t mapped_addr = addr;
-        if ((addr >= m_base_addr) && ((addr + len - 1) < (m_base_addr + m_mapping_size))) {
+        sc_dt::uint64 addr = trans.get_address();
+        sc_dt::uint64 len = trans.get_data_length();
+        sc_dt::uint64 mapped_addr = addr;
+        sc_dt::uint64 target_end;
+        sc_dt::uint64 mapped_end;
+        sc_dt::uint64 txn_end = addr;
+        const bool range_valid = range_end(m_base_addr, m_mapping_size, target_end);
+        const bool mapped_range_valid = range_end(p_mapped_base_addr.get_value(), m_mapping_size, mapped_end);
+        const bool txn_valid = (len == 0) || range_end(addr, len, txn_end);
+        if (range_valid && mapped_range_valid && txn_valid && addr >= m_base_addr && txn_end <= target_end) {
             mapped_addr = addr_fw(addr);
             trans.set_address(mapped_addr);
         } else {
@@ -66,34 +108,10 @@ private:
         return mapped_addr;
     }
 
-    void map_dmi_start_end_addr(uint64_t& start_addr, uint64_t& end_addr)
-    {
-        if (start_addr < p_mapped_base_addr.get_value()) {
-            start_addr = m_base_addr;
-        } else if ((start_addr >= p_mapped_base_addr.get_value()) &&
-                   (start_addr < (p_mapped_base_addr.get_value() + m_mapping_size))) {
-            start_addr = addr_bw(start_addr);
-        } else {
-            SCP_FATAL(()) << "DMI granted start address 0x" << std::hex << start_addr
-                          << " is bigger than the mapped area 0x" << std::hex << p_mapped_base_addr.get_value()
-                          << " size: 0x" << std::hex << m_mapping_size;
-        }
-        if (end_addr >= (p_mapped_base_addr.get_value() + m_mapping_size)) {
-            end_addr = m_base_addr + m_mapping_size - 1;
-        } else if ((end_addr >= p_mapped_base_addr.get_value()) &&
-                   (end_addr < (p_mapped_base_addr.get_value() + m_mapping_size))) {
-            end_addr = addr_bw(end_addr);
-        } else {
-            SCP_FATAL(()) << "DMI granted end address 0x" << std::hex << end_addr
-                          << " is smaller than the mapped area 0x" << std::hex << p_mapped_base_addr.get_value()
-                          << " size: 0x" << std::hex << m_mapping_size;
-        }
-    }
-
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
     {
-        uint64_t orig_addr = trans.get_address();
-        uint64_t mapped_addr = map_txn_addr(trans);
+        sc_dt::uint64 orig_addr = trans.get_address();
+        sc_dt::uint64 mapped_addr = map_txn_addr(trans);
         SCP_DEBUG(()) << "b_transport to addr: 0x" << std::hex << orig_addr << " will be mapped to addr: 0x" << std::hex
                       << mapped_addr;
         initiator_socket->b_transport(trans, delay);
@@ -102,8 +120,8 @@ private:
 
     unsigned int transport_dbg(tlm::tlm_generic_payload& trans)
     {
-        uint64_t orig_addr = trans.get_address();
-        uint64_t mapped_addr = map_txn_addr(trans);
+        sc_dt::uint64 orig_addr = trans.get_address();
+        sc_dt::uint64 mapped_addr = map_txn_addr(trans);
         SCP_DEBUG(()) << "transport_dbg to addr: 0x" << std::hex << orig_addr << " will be mapped to addr: 0x"
                       << std::hex << mapped_addr;
         unsigned int ret = initiator_socket->transport_dbg(trans);
@@ -113,14 +131,26 @@ private:
 
     bool get_direct_mem_ptr(tlm::tlm_generic_payload& trans, tlm::tlm_dmi& dmi_data)
     {
-        uint64_t orig_addr = trans.get_address();
-        uint64_t mapped_addr = map_txn_addr(trans);
+        sc_dt::uint64 orig_addr = trans.get_address();
+        sc_dt::uint64 mapped_addr = map_txn_addr(trans);
         bool ret = initiator_socket->get_direct_mem_ptr(trans, dmi_data);
         trans.set_address(orig_addr);
         if (ret) {
-            uint64_t start_addr = dmi_data.get_start_address();
-            uint64_t end_addr = dmi_data.get_end_address();
-            map_dmi_start_end_addr(start_addr, end_addr);
+            sc_dt::uint64 start_addr = dmi_data.get_start_address();
+            sc_dt::uint64 end_addr = dmi_data.get_end_address();
+            unsigned char* dmi_ptr = dmi_data.get_dmi_ptr();
+
+            if (mapped_addr < start_addr || mapped_addr > end_addr) {
+                SCP_DEBUG(()) << "DMI grant did not contain requested mapped address 0x" << std::hex << mapped_addr;
+                return false;
+            }
+
+            ret = map_window(start_addr, end_addr, &dmi_ptr);
+            if (!ret) {
+                SCP_DEBUG(()) << "DMI grant did not overlap mapped range";
+                return false;
+            }
+            dmi_data.set_dmi_ptr(dmi_ptr);
             dmi_data.set_start_address(start_addr);
             dmi_data.set_end_address(end_addr);
             SCP_DEBUG(()) << "DMI was granted to range 0x" << std::hex << start_addr << " - 0x" << std::hex << end_addr;
@@ -130,9 +160,13 @@ private:
 
     void invalidate_direct_mem_ptr(sc_dt::uint64 start, sc_dt::uint64 end)
     {
-        uint64_t start_addr = start;
-        uint64_t end_addr = end;
-        map_dmi_start_end_addr(start_addr, end_addr);
+        sc_dt::uint64 start_addr = start;
+        sc_dt::uint64 end_addr = end;
+        if (!map_window(start_addr, end_addr)) {
+            SCP_DEBUG(()) << "Ignoring invalidate_direct_mem_ptr outside mapped range 0x" << std::hex << start
+                          << " - 0x" << std::hex << end;
+            return;
+        }
         SCP_DEBUG(()) << "invalidate_direct_mem_ptr request to range 0x" << std::hex << start_addr << " - 0x"
                       << std::hex << end_addr;
         target_socket->invalidate_direct_mem_ptr(start_addr, end_addr);
