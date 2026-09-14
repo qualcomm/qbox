@@ -78,6 +78,13 @@ void Device::set_prop_chardev(const char* name, Chardev chr)
     m_int->exports().qdev_prop_set_chr(qemu_dev, name, char_dev);
 }
 
+void Device::set_prop_string(const char* name, const char* value)
+{
+    QemuDevice* qemu_dev = reinterpret_cast<QemuDevice*>(m_obj);
+
+    m_int->exports().qdev_prop_set_string(qemu_dev, name, value);
+}
+
 void Device::set_prop_uint_array(const char* name, std::vector<unsigned int> vec)
 {
     QemuDevice* qemu_dev = reinterpret_cast<QemuDevice*>(m_obj);

@@ -81,6 +81,7 @@ class Gpio;
 class Timer;
 class Bus;
 class Chardev;
+class Clock;
 class DisplayOptions;
 class DisplayGLCtxOps;
 class Console;
@@ -175,6 +176,9 @@ public:
     std::shared_ptr<Timer> timer_new();
 
     Chardev chardev_new(const char* label, const char* type);
+    Clock clock_new(QemuObject* o, const char* label);
+    bool clock_set_hz(Clock& clock, uint64_t hz);
+    void qdev_connect_clock_in(QemuObject* o, const char* name, Clock& clk);
 
     void tb_invalidate_phys_range(uint64_t start, uint64_t end);
 
@@ -647,6 +651,7 @@ public:
 
     void set_prop_chardev(const char* name, Chardev chr);
     void set_prop_uint_array(const char* name, std::vector<unsigned int> vec);
+    void set_prop_string(const char* name, const char* value);
 };
 
 class SysBusDevice : public Device
@@ -761,6 +766,16 @@ public:
     Chardev() = default;
     Chardev(const Chardev& o) = default;
     Chardev(const Object& o): Object(o) {}
+};
+
+class Clock : public Object
+{
+public:
+    static constexpr const char* const TYPE = "clock";
+
+    Clock() = default;
+    Clock(const Clock&) = default;
+    Clock(const Object& o): Object(o) {}
 };
 
 }; /* namespace qemu */

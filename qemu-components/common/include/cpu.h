@@ -152,6 +152,7 @@ protected:
     bool m_coroutines;
 
     qemu::Cpu m_cpu;
+    std::string m_cpu_type;
 
     gs::async_event m_qemu_kick_ev;
     sc_core::sc_event_or_list m_external_ev;
@@ -509,8 +510,10 @@ public:
     TargetSignalSocket<bool> halt;
     TargetSignalSocket<bool> reset;
 
-    QemuCpu(const sc_core::sc_module_name& name, QemuInstance& inst, const std::string& type_name)
-        : QemuDevice(name, inst, (type_name + "-cpu").c_str())
+    QemuCpu(const sc_core::sc_module_name& name, QemuInstance& inst, const std::string& type_name,
+            const char* cpu_type = nullptr)
+        : QemuDevice(name, inst, cpu_type == nullptr ? (type_name + "-cpu").c_str() : type_name.c_str())
+        , m_cpu_type(cpu_type == nullptr ? "" : cpu_type)
         , halt("halt")
         , reset("reset")
         , m_qemu_kick_ev(false)
@@ -622,21 +625,32 @@ public:
      */
     bool can_run() override { return m_cpu.can_run(); }
 
+    void retrieve_qemu_cpu()
+    {
+        if (m_cpu_type.empty()) {
+            m_cpu = qemu::Cpu(m_dev);
+        } else {
+            // Cortex-Mxx case, retrieve cpu from 'armv7m' device,
+            // must be done after the device is realized by Qemu
+            // (so after SystemC QemuDevice::end_of_elaboration())
+            m_cpu = qemu::Cpu(m_dev.get_prop_link("cpu"));
+        }
+        m_time_sync->on_after_cpu_created();
+
+        m_cpu.set_soft_stopped(true);
+        m_time_sync->on_before_end_of_elaboration();
+
+        m_cpu_hint_ext.set_cpu(m_cpu);
+    }
+
     void before_end_of_elaboration() override
     {
         QemuDevice::before_end_of_elaboration();
 
-        m_cpu = qemu::Cpu(m_dev);
-
-        m_time_sync->on_after_cpu_created();
-
+        if (m_cpu_type.empty()) {
+            retrieve_qemu_cpu();
+        }
         socket.init(m_dev, "memory");
-
-        m_cpu.set_soft_stopped(true);
-
-        m_time_sync->on_before_end_of_elaboration();
-
-        m_cpu_hint_ext.set_cpu(m_cpu);
     }
 
     void halt_cb(const bool& val)
@@ -696,6 +710,11 @@ public:
     virtual void end_of_elaboration() override
     {
         QemuDevice::end_of_elaboration();
+
+        if (!m_cpu_type.empty()) {
+            retrieve_qemu_cpu();
+        }
+
         m_time_sync->on_end_of_elaboration();
         if (!p_gdb_port.is_default_value()) {
             std::stringstream ss;
