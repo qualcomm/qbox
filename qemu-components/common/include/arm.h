@@ -17,8 +17,9 @@ public:
 
     TargetSignalSocket<bool> power_on;
 
-    QemuCpuArm(const sc_core::sc_module_name& name, QemuInstance& inst, const std::string& type_name)
-        : QemuCpu(name, inst, type_name), power_on("power_on")
+    QemuCpuArm(const sc_core::sc_module_name& name, QemuInstance& inst, const std::string& type_name,
+               const char* cpu_type = nullptr)
+        : QemuCpu(name, inst, type_name, cpu_type), power_on("power_on")
     {
         auto poweroncb = std::bind(&QemuCpuArm::power_on_cb, this, std::placeholders::_1);
         power_on.register_value_changed_cb(poweroncb);

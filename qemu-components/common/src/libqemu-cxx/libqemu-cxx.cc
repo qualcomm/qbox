@@ -195,6 +195,25 @@ Chardev LibQemu::chardev_new(const char* label, const char* type)
     return ret;
 }
 
+Clock LibQemu::clock_new(QemuObject* o, const char* label)
+{
+    QemuClock* qemu_clock = m_int->exports().clock_new(o, label);
+    Clock ret(Object(reinterpret_cast<QemuObject*>(qemu_clock), m_int));
+
+    return ret;
+}
+
+bool LibQemu::clock_set_hz(Clock& clock, uint64_t hz)
+{
+    return m_int->exports().clock_set_hz(reinterpret_cast<QemuClock*>(clock.get_qemu_obj()), hz);
+}
+
+void LibQemu::qdev_connect_clock_in(QemuObject* o, const char* name, Clock& clk)
+{
+    m_int->exports().qdev_connect_clock_in(reinterpret_cast<QemuDevice*>(o), name,
+                                           reinterpret_cast<QemuClock*>(clk.get_qemu_obj()));
+}
+
 void LibQemu::check_cast(Object& o, const char* type) { /* TODO */ }
 
 void LibQemu::lock_iothread() { m_int->exports().qemu_mutex_lock_iothread(); }
