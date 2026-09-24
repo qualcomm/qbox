@@ -141,3 +141,11 @@ completing the bidirectional data path. The same pattern
 applies when using `char_backend_socket` or `char_backend_file`
 -- simply replace the backend instance name and set the
 appropriate CCI parameters.
+
+Note the `dylib_path` parameter on the UART: it makes the
+platform load the `Pl011` model from the `uart-pl011` shared
+library at runtime. A library loaded this way must export an
+`extern "C" void module_register()` hook that registers the
+module type -- see
+[Loading Components from Shared Libraries](configuration.md#loading-components-from-shared-libraries)
+for the details of this contract.
