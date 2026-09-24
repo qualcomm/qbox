@@ -368,7 +368,7 @@ void monitor<BUSWIDTH>::init_monitor()
         uint32_t data;
         tlm::tlm_generic_payload txn;
         txn.set_command(tlm::TLM_READ_COMMAND);
-        txn.set_address(0);
+        txn.set_address(addr);
         txn.set_data_ptr(reinterpret_cast<unsigned char*>(&data));
         txn.set_data_length(4);
         txn.set_streaming_width(4);
