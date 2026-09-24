@@ -530,9 +530,11 @@ private:
 
     // SMMU Global Register Offsets (from SMMU_REG_ADDR)
     static constexpr uint32_t SMMU_SCR0_OFFSET = 0x0;
+    static constexpr uint32_t SMMU_NSCR0_OFFSET = 0x400;
     static constexpr uint32_t SMMU_SMR_BASE_OFFSET = 0x800;
     static constexpr uint32_t SMMU_S2CR_BASE_OFFSET = 0xc00;
     static constexpr uint32_t SMMU_CBAR_BASE_OFFSET = 0x1000;
+    static constexpr uint32_t SMMU_CBA2R_BASE_OFFSET = 0x1800;
 
     // Context Bank Page Layout
     static constexpr uint32_t CB_PAGE_OFFSET = 16; // CBs start at page 16 (0x10000)
@@ -764,8 +766,10 @@ public:
 
         SCP_INFO(()) << "Configuring SMMU for tester-controlled operation";
 
-        // First: clear CLIENTPD in SMMU_SCR0 (enable SMMU translation)
+        // Enable translation for both security states. CPU accesses arrive as
+        // Non-secure transactions and therefore use NSCR0.
         write_smmu_register(SMMU_REG_ADDR + SMMU_SCR0_OFFSET, 0x0);
+        write_smmu_register(SMMU_REG_ADDR + SMMU_NSCR0_OFFSET, 0x0);
 
         // Configure SMRs and S2CRs for NEW DUAL-TBU ARCHITECTURE
         // SHARED IDENTITY: All identity TBUs share StreamID 0 → CB0
@@ -777,7 +781,7 @@ public:
         write_smmu_register(smr0_addr, smr0_value);
 
         uint32_t s2cr0_addr = SMMU_REG_ADDR + SMMU_S2CR_BASE_OFFSET;
-        uint32_t s2cr0_value = (0x1 << 16) | (0 << 0); // TYPE=1, CBNDX=0
+        uint32_t s2cr0_value = (0x0 << 16) | (0 << 0); // TYPE=0 (Translation), CBNDX=0
         write_smmu_register(s2cr0_addr, s2cr0_value);
 
         SCP_INFO(()) << "SMR[0]/S2CR[0]: StreamID=0 -> CB0 (SHARED identity for ALL CPUs)";
@@ -792,7 +796,7 @@ public:
             write_smmu_register(smr_addr, smr_value);
 
             uint32_t s2cr_addr = SMMU_REG_ADDR + SMMU_S2CR_BASE_OFFSET + (high_va_stream_id * 4);
-            uint32_t s2cr_value = (0x1 << 16) | (high_va_cb << 0); // TYPE=1, CBNDX=cb
+            uint32_t s2cr_value = (0x0 << 16) | (high_va_cb << 0); // TYPE=0 (Translation), CBNDX=cb
             write_smmu_register(s2cr_addr, s2cr_value);
 
             SCP_INFO(()) << "SMR[" << high_va_stream_id << "]/S2CR[" << high_va_stream_id
@@ -966,6 +970,10 @@ public:
         // Set CBAR.TYPE = 1 (translation enabled for this CB)
         uint32_t cbar_addr = SMMU_REG_ADDR + SMMU_CBAR_BASE_OFFSET + (cb * 4);
         write_smmu_register(cbar_addr, (1 << 16)); // TYPE=1
+
+        // Select the AArch64 context-bank format used by the 64-bit page tables below.
+        uint32_t cba2r_addr = SMMU_REG_ADDR + SMMU_CBA2R_BASE_OFFSET + (cb * 4);
+        write_smmu_register(cba2r_addr, 1u); // VA64=1
 
         // Configure TTBR0 with the page table address
         write_smmu_register(cb_base + CB_TTBR0_LOW_OFFSET, static_cast<uint32_t>(l0_table_addr & 0xFFFFFFFF));
