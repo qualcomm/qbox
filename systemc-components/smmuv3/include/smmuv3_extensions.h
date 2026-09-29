@@ -29,19 +29,6 @@ public:
     }
 };
 
-class smmuv3_secure_extension : public tlm::tlm_extension<smmuv3_secure_extension>
-{
-public:
-    bool secure = false;
-
-    tlm::tlm_extension_base* clone() const override { return new smmuv3_secure_extension(*this); }
-    void copy_from(const tlm::tlm_extension_base& ext) override
-    {
-        const auto& other = static_cast<const smmuv3_secure_extension&>(ext);
-        secure = other.secure;
-    }
-};
-
 // ATS = Address Translation Service: an upstream device asks the SMMU to translate an address
 //       (and cache the result locally) instead of having the SMMU translate every transaction.
 class smmuv3_ats_extension : public tlm::tlm_extension<smmuv3_ats_extension>

@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <memory>
+#include <limits>
 #include <functional>
 #include <set>
 #include <vector>
@@ -350,7 +351,14 @@ public:
 
     struct MemTxAttrs {
         bool secure = false;
+        uint8_t space = 0;
+        bool user = false;
+        bool memory = false;
         bool debug = false;
+        uint16_t requester_id = 0;
+        uint8_t pid = 0;
+        bool address_type = false;
+        bool unspecified = false;
 
         MemTxAttrs() = default;
         MemTxAttrs(const ::MemTxAttrs& qemu_attrs);
@@ -470,18 +478,13 @@ class IOMMUMemoryRegion : public MemoryRegion
 public:
     static constexpr const char* const TYPE = "libqemu-iommu-memory-region";
 
-    qemu::MemoryRegion m_root_te;
-    std::shared_ptr<qemu::AddressSpace> m_as_te;
     qemu::MemoryRegion m_root_io;
     std::shared_ptr<qemu::AddressSpace> m_as_io;
-    std::map<uint64_t, std::shared_ptr<DmiRegionBase>> m_dmi_aliases_te;
     std::map<uint64_t, std::shared_ptr<DmiRegionBase>> m_dmi_aliases_io;
     uint64_t min_page_sz;
 
     IOMMUMemoryRegion(const Object& o)
         : MemoryRegion(o)
-        , m_root_te(get_inst().object_new_unparented<qemu::MemoryRegion>())
-        , m_as_te(get_inst().address_space_new())
         , m_root_io(get_inst().object_new_unparented<qemu::MemoryRegion>())
         , m_as_io(get_inst().address_space_new())
     {
@@ -502,12 +505,47 @@ public:
         IOMMUAccessFlags perm;
     };
 
-    std::map<uint64_t, qemu::IOMMUMemoryRegion::IOMMUTLBEntry> m_mapped_te;
+    struct TranslationContext {
+        qemu::MemoryRegion root;
+        std::shared_ptr<qemu::AddressSpace> as;
+        std::map<uint64_t, std::shared_ptr<DmiRegionBase>> dmi_aliases;
+        std::map<uint64_t, IOMMUTLBEntry> mappings;
+
+        explicit TranslationContext(LibQemu& inst)
+            : root(inst.object_new_unparented<qemu::MemoryRegion>())
+            , as(inst.address_space_new())
+        {
+        }
+    };
 
     using IOMMUTranslateCallbackFn = std::function<void(IOMMUTLBEntry*, uint64_t, IOMMUAccessFlags, int)>;
+    using IOMMUAttrsToIndexCallbackFn = std::function<int(MemoryRegionOps::MemTxAttrs)>;
+    using IOMMUNumIndexesCallbackFn = std::function<int()>;
+    using IOMMUIndexToAttrsCallbackFn = std::function<MemoryRegionOps::MemTxAttrs(int)>;
+
     void init(const Object& owner, const char* name, uint64_t size, MemoryRegionOpsPtr ops,
-              IOMMUTranslateCallbackFn cb);
+              IOMMUTranslateCallbackFn cb, IOMMUAttrsToIndexCallbackFn attrs_to_index_cb = {},
+              IOMMUNumIndexesCallbackFn num_indexes_cb = {}, IOMMUIndexToAttrsCallbackFn index_to_attrs_cb = {});
+    MemoryRegionOps::MemTxAttrs attrs_for_index(int idx) const
+    {
+        return m_index_to_attrs_cb ? m_index_to_attrs_cb(idx) : MemoryRegionOps::MemTxAttrs{};
+    }
+    TranslationContext& translation_context(int idx)
+    {
+        auto& context = m_translation_contexts[idx];
+        if (!context) {
+            context = std::make_unique<TranslationContext>(get_inst());
+            context->root.init(*this, "IOMMU translated root", std::numeric_limits<uint64_t>::max());
+            context->as->init(context->root, "IOMMU translated AddressSpace");
+        }
+        return *context;
+    }
+    std::map<int, std::unique_ptr<TranslationContext>>& translation_contexts() { return m_translation_contexts; }
     void iommu_unmap(IOMMUTLBEntry*);
+
+private:
+    IOMMUIndexToAttrsCallbackFn m_index_to_attrs_cb;
+    std::map<int, std::unique_ptr<TranslationContext>> m_translation_contexts;
 };
 
 class MemoryListener
