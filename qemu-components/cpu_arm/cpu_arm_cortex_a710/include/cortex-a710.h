@@ -132,6 +132,7 @@ public:
         }
         cpu.set_prop_bool("has_el2", p_has_el2);
         cpu.set_prop_bool("has_el3", p_has_el3);
+        init_secure_memory(p_has_el3.get_value());
 
         if (!p_en_pauth.is_default_value()) {
             cpu.set_prop_bool("pauth", p_en_pauth);
