@@ -55,8 +55,31 @@ static inline uint32_t LIB_TO_QEMU_MEMTXRESULT_MAPPING(MemoryRegionOps::MemTxRes
  */
 
 MemoryRegionOps::MemTxAttrs::MemTxAttrs(const ::MemTxAttrs& qemu_attrs)
-    : secure(qemu_attrs.secure), debug(qemu_attrs.debug)
+    : secure(qemu_attrs.secure)
+    , space(qemu_attrs.space)
+    , user(qemu_attrs.user)
+    , memory(qemu_attrs.memory)
+    , debug(qemu_attrs.debug)
+    , requester_id(qemu_attrs.requester_id)
+    , pid(qemu_attrs.pid)
+    , address_type(qemu_attrs.address_type)
+    , unspecified(qemu_attrs.unspecified)
 {
+}
+
+static ::MemTxAttrs to_qemu_memtx_attrs(MemoryRegionOps::MemTxAttrs attrs)
+{
+    ::MemTxAttrs qemu_attrs = {};
+    qemu_attrs.secure = attrs.secure;
+    qemu_attrs.space = attrs.space;
+    qemu_attrs.user = attrs.user;
+    qemu_attrs.memory = attrs.memory;
+    qemu_attrs.debug = attrs.debug;
+    qemu_attrs.requester_id = attrs.requester_id;
+    qemu_attrs.pid = attrs.pid;
+    qemu_attrs.address_type = attrs.address_type;
+    qemu_attrs.unspecified = attrs.unspecified;
+    return qemu_attrs;
 }
 
 MemoryRegionOps::MemoryRegionOps(QemuMemoryRegionOps* ops, std::shared_ptr<LibQemuInternals> internals)
@@ -207,36 +230,28 @@ void MemoryRegion::del_subregion(const MemoryRegion& mr)
 
 MemoryRegion::MemTxResult MemoryRegion::dispatch_read(uint64_t addr, uint64_t* data, uint64_t size, MemTxAttrs attrs)
 {
-    ::MemTxAttrs qemu_attrs = {};
     ::MemTxResult qemu_res;
     QemuMemoryRegion* mr = reinterpret_cast<QemuMemoryRegion*>(m_obj);
 
-    qemu_attrs.secure = attrs.secure;
-
-    qemu_res = m_int->exports().memory_region_dispatch_read(mr, addr, data, size, qemu_attrs);
+    qemu_res = m_int->exports().memory_region_dispatch_read(mr, addr, data, size, to_qemu_memtx_attrs(attrs));
 
     return QEMU_TO_LIB_MEMTXRESULT_MAPPING(qemu_res);
 }
 
 MemoryRegion::MemTxResult MemoryRegion::dispatch_write(uint64_t addr, uint64_t data, uint64_t size, MemTxAttrs attrs)
 {
-    ::MemTxAttrs qemu_attrs = {};
     ::MemTxResult qemu_res;
     QemuMemoryRegion* mr = reinterpret_cast<QemuMemoryRegion*>(m_obj);
 
-    qemu_attrs.secure = attrs.secure;
-
-    qemu_res = m_int->exports().memory_region_dispatch_write(mr, addr, data, size, qemu_attrs);
+    qemu_res = m_int->exports().memory_region_dispatch_write(mr, addr, data, size, to_qemu_memtx_attrs(attrs));
 
     return QEMU_TO_LIB_MEMTXRESULT_MAPPING(qemu_res);
 }
 
 void IOMMUMemoryRegion::init(const Object& owner, const char* name, uint64_t size, MemoryRegionOpsPtr ops,
-                             IOMMUTranslateCallbackFn cb)
+                             IOMMUTranslateCallbackFn cb, IOMMUAttrsToIndexCallbackFn attrs_to_index_cb,
+                             IOMMUNumIndexesCallbackFn num_indexes_cb, IOMMUIndexToAttrsCallbackFn index_to_attrs_cb)
 {
-    // these areas cover all of the address space as we dont know where the VA or the PA will end up being.
-    m_root_te.init(*this, "IOMMU translated root", std::numeric_limits<uint64_t>::max());
-    m_as_te->init(m_root_te, "IOMMU translated AddressSpace");
     m_root_io.init_io(*this, "IOMMU untranslated root", std::numeric_limits<uint64_t>::max(), ops);
     m_as_io->init(m_root_io, "IOMMU untranslated AddressSpace");
 
@@ -246,6 +261,14 @@ void IOMMUMemoryRegion::init(const Object& owner, const char* name, uint64_t siz
     m_int->exports().iommu_memory_region_init(mr, owner.get_qemu_obj(), name, size);
 
     m_int->get_iommu_translate_cb().register_cb(*this, cb);
+    if (attrs_to_index_cb) {
+        m_int->get_iommu_attrs_to_index_cb().register_cb(
+            *this, [attrs_to_index_cb](int* index, MemTxAttrs attrs) { *index = attrs_to_index_cb(attrs); });
+    }
+    if (num_indexes_cb) {
+        m_int->get_iommu_num_indexes_cb().register_cb(*this, [num_indexes_cb](int* count) { *count = num_indexes_cb(); });
+    }
+    m_index_to_attrs_cb = std::move(index_to_attrs_cb);
 
     auto s = m_int->exports().memory_region_iommu_get_min_page_size(mr);
     min_page_sz = log2(s);
@@ -285,12 +308,9 @@ void AddressSpace::init(MemoryRegion mr, const char* name, bool global)
 
 AddressSpace::MemTxResult AddressSpace::read(uint64_t addr, void* data, size_t size, AddressSpace::MemTxAttrs attrs)
 {
-    ::MemTxAttrs qemu_attrs = {};
     ::MemTxResult qemu_res;
 
-    qemu_attrs.secure = attrs.secure;
-
-    qemu_res = m_int->exports().address_space_read(m_as, addr, qemu_attrs, data, size);
+    qemu_res = m_int->exports().address_space_read(m_as, addr, to_qemu_memtx_attrs(attrs), data, size);
 
     return QEMU_TO_LIB_MEMTXRESULT_MAPPING(qemu_res);
 }
@@ -298,12 +318,9 @@ AddressSpace::MemTxResult AddressSpace::read(uint64_t addr, void* data, size_t s
 AddressSpace::MemTxResult AddressSpace::write(uint64_t addr, const void* data, size_t size,
                                               AddressSpace::MemTxAttrs attrs)
 {
-    ::MemTxAttrs qemu_attrs = {};
     ::MemTxResult qemu_res;
 
-    qemu_attrs.secure = attrs.secure;
-
-    qemu_res = m_int->exports().address_space_write(m_as, addr, qemu_attrs, data, size);
+    qemu_res = m_int->exports().address_space_write(m_as, addr, to_qemu_memtx_attrs(attrs), data, size);
 
     return QEMU_TO_LIB_MEMTXRESULT_MAPPING(qemu_res);
 }
