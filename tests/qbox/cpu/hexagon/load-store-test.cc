@@ -22,6 +22,7 @@ private:
     QemuInstance qemu_instance;
 
     qemu_cpu_hexagon cpu;
+    hexagon_tlb tlb;
     hexagon_globalreg hex_gregs;
     gs::gs_memory<> memory;
     gs::router<> router;
@@ -37,12 +38,15 @@ public:
         : sc_core::sc_module(module_name)
         , qemu_instance("qemu_instance", &qemu_instance_manager, qemu_cpu_hexagon::ARCH)
         , cpu("hexagon_cpu", qemu_instance)
+        , tlb("hexagon_tlb", qemu_instance)
         , memory("memory")
         , router("router")
         , mmio_probe("mmio_probe", router)
         , test_passed(false)
         , hex_gregs("hexagon_globalreg", &qemu_instance)
     {
+        cpu.set_hex_tlb(&tlb);
+
         sc_core::sc_time global_quantum(QUANTUM, sc_core::SC_NS);
         tlm_utils::tlm_quantumkeeper::set_global_quantum(global_quantum);
 
