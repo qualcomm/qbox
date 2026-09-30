@@ -76,6 +76,7 @@ private:
     LibQemuObjectCallback<Cpu::CpuKickCallbackFn> m_cpu_kick_cbs;
     LibQemuObjectCallback<IOMMUMemoryRegion::IOMMUTranslateCallbackFn> m_iommu_translate_cbs;
     LibQemuObjectCallback<CpuRiscv64::MipUpdateCallbackFn> m_riscv_mip_update_cbs;
+    std::vector<std::shared_ptr<Gpio::GpioProxy>> m_gpio_proxies;
 
     std::vector<LibQemuObjectCallbackBase*> m_cbs{
         &m_cpu_end_of_loop_cbs,
@@ -109,6 +110,8 @@ public:
     {
         return m_riscv_mip_update_cbs;
     }
+
+    void retain_gpio_proxy(std::shared_ptr<Gpio::GpioProxy> proxy) { m_gpio_proxies.push_back(std::move(proxy)); }
 };
 
 } // namespace qemu

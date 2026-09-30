@@ -854,6 +854,7 @@ inline void QemuCpu::QuantumKeeperSync::on_before_end_of_elaboration()
 
 inline void QemuCpu::QuantumKeeperSync::on_end_of_simulation()
 {
+    m_qemu_cpu.m_deadline_timer->del();
     m_qemu_cpu.m_qk->stop();
     /* Unblock the CPU thread if it's sleeping */
     m_qemu_cpu.set_signaled();

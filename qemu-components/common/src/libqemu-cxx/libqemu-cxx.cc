@@ -181,6 +181,7 @@ Gpio LibQemu::gpio_new()
 
     Gpio gpio(Object(reinterpret_cast<QemuObject*>(qemu_gpio), m_int));
     gpio.set_proxy(proxy);
+    m_int->retain_gpio_proxy(std::move(proxy));
 
     return gpio;
 }
