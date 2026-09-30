@@ -41,6 +41,8 @@ class CpuHexagonResetGPIOTest : public CpuTestBench<qemu_cpu_hexagon, CpuTesterM
     MultiInitiatorSignalSocket<bool> reset;
     reset_gpio reset_controller;
     hexagon_globalreg hex_gregs;
+    hexagon_tlb tlb_a;
+    hexagon_tlb tlb_b;
     std::thread m_thread;
     gs::async_event reset_event;
     sc_core::sc_event finish_event;
@@ -60,12 +62,15 @@ public:
         : CpuTestBench<qemu_cpu_hexagon, CpuTesterMmio>(n)
         , reset_controller("reset", &m_inst_a)
         , hex_gregs("hexagon_globalreg", &m_inst_a)
+        , tlb_a("tlb_a", m_inst_a)
+        , tlb_b("tlb_b", m_inst_b)
         , reset_count(0)
         , reset_done(false)
         , time_elapsed_ms(0)
     {
         for (int i = 0; i < m_cpus.size(); i++) {
             auto& cpu = m_cpus[i];
+            cpu.set_hex_tlb(i % 2 ? &tlb_b : &tlb_a);
             cpu.p_hexagon_num_threads = m_cpus.size();
             cpu.p_start_powered_off = (i != 0);
         }

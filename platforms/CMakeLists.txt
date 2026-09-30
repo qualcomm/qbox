@@ -27,7 +27,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND EXISTS "/etc/lsb-release")
                 add_custom_target(ubuntu
                     COMMAND ${UBUNTU_BUILD_COMMAND}
                     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/platforms/ubuntu/fw
-                    COMMAND ${CMAKE_BINARY_DIR}/vp -p 'hex_coproc_dir=""' -l ${CMAKE_SOURCE_DIR}/configs/fw/8775/bsp/lnx/ubuntu/conf.lua --images-dir ${PROJECT_SOURCE_DIR}/platforms/ubuntu/fw/
+                    COMMAND ${CMAKE_BINARY_DIR}/vp -l ${CMAKE_SOURCE_DIR}/configs/fw/8775/bsp/lnx/ubuntu/conf.lua --images-dir ${PROJECT_SOURCE_DIR}/platforms/ubuntu/fw/
                     DEPENDS vp
                 )
         else()
