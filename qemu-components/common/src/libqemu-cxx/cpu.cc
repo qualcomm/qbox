@@ -71,7 +71,7 @@ void Cpu::async_safe_run(AsyncJobFn job)
 
     auto cpu_loop_exit_noexc = m_int->exports().cpu_loop_exit_noexc;
 
-    m_int->exports().cpu_restore_state(m_obj, pc, true);
+    m_int->exports().cpu_restore_state(m_obj, pc);
     cpu_loop_exit_noexc(m_obj);
 
     /*

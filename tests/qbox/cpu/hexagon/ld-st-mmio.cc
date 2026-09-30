@@ -18,6 +18,8 @@ class CpuHexagonLdStTest : public CpuTestBench<qemu_cpu_hexagon, CpuTesterMmio>
 {
     bool passed = false;
     hexagon_globalreg hex_gregs;
+    hexagon_tlb tlb_a;
+    hexagon_tlb tlb_b;
 
 protected:
     gs::async_event m_aev;
@@ -28,10 +30,13 @@ public:
         : CpuTestBench<qemu_cpu_hexagon, CpuTesterMmio>(n)
         , hex_gregs("hexagon_globalreg", &m_inst_a)
         , m_aev("aev")
+        , tlb_a("tlb_a", m_inst_a)
+        , tlb_b("tlb_b", m_inst_b)
         , m_finish_event("finish")
     {
         for (int i = 0; i < m_cpus.size(); i++) {
             auto& cpu = m_cpus[i];
+            cpu.set_hex_tlb(i % 2 ? &tlb_b : &tlb_a);
             cpu.p_hexagon_num_threads = m_cpus.size();
             cpu.p_start_powered_off = (i != 0);
         }

@@ -68,11 +68,10 @@ public:
                                 "number of hexagon threads") // THREADS_MAX in ./target/hexagon/cpu.h
         , p_isdben_trusted("isdben_trusted", true, "isdben trusted")
         , p_isdben_secure("isdben_secure", true, "isdben secure")
-        , p_coproc("coproc", "", "coproc")
         , p_cmdline("cmdline", "", "cmdline")
         , p_vtcm_base_addr("vtcm_base_addr", 0, "vtcm base address")
         , p_vtcm_size_kb("vtcm_size_kb", 0, "vtcm size in kb")
-        , p_num_coproc_instance("num_coproc_instance", 0, "number of coproc instances")
+        , p_coproc2_present("coproc2_present", false, "secondary coprocessor is present")
         , p_hvx_contexts("hvx_contexts", 0, "number of HVX contexts")
         , p_hex_greg(hex_greg)
         , m_l2vic(l2vic)
@@ -102,7 +101,6 @@ public:
         if (dsp_rev == qemu::CpuHexagon::unknown_rev) {
             SCP_FATAL(())("Unrecognized Architecture Revision: " + dsp_arch);
         }
-        cpu.set_prop_int("dsp-rev", dsp_rev);
         cpu.set_prop_bool("start-powered-off", p_start_powered_off);
         cpu.set_prop_bool("sched-limit", p_sched_limit);
         cpu.set_prop_bool("virtual-platform-mode", p_vp_mode);
@@ -110,11 +108,10 @@ public:
         cpu.set_prop_bool("paranoid-commit-state", p_paranoid);
         cpu.set_prop_int("subsystem-id", p_subsystem_id);
         cpu.set_prop_int("thread-count", p_hexagon_num_threads);
-        cpu.set_prop_str("coproc", p_coproc.get_value().data());
         cpu.set_prop_str("cmdline", p_cmdline.get_value().data());
         cpu.set_prop_int("vtcm-base-addr", p_vtcm_base_addr);
         cpu.set_prop_int("vtcm-size-kb", p_vtcm_size_kb);
-        cpu.set_prop_int("num-coproc-instance", p_num_coproc_instance);
+        cpu.set_prop_bool("coproc2-present", p_coproc2_present);
         cpu.set_prop_int("hvx-contexts", p_hvx_contexts);
         if (p_hex_greg) {
             p_hex_greg->before_end_of_elaboration();
@@ -161,11 +158,10 @@ public:
     cci::cci_param<uint32_t> p_hexagon_num_threads;
     cci::cci_param<bool> p_isdben_trusted;
     cci::cci_param<bool> p_isdben_secure;
-    cci::cci_param<std::string> p_coproc;
     cci::cci_param<std::string> p_cmdline;
     cci::cci_param<uint64_t> p_vtcm_base_addr;
     cci::cci_param<uint32_t> p_vtcm_size_kb;
-    cci::cci_param<uint32_t> p_num_coproc_instance;
+    cci::cci_param<bool> p_coproc2_present;
     cci::cci_param<uint32_t> p_hvx_contexts;
 };
 
