@@ -260,7 +260,7 @@ protected:
                     alias->set_installed();
                     iommumr->m_dmi_aliases_io[alias->get_start()] = alias;
                 }
-                auto mask = iommumr->min_page_sz;
+                auto mask = (static_cast<uint64_t>(1) << iommumr->min_page_sz) - 1;
                 te->target_as = iommumr->m_as_io->get_ptr();
                 te->addr_mask = mask;
                 te->iova = addr & ~mask;
@@ -287,7 +287,7 @@ protected:
             // in the normal address space
 
             te->target_as = iommumr->m_as_io->get_ptr();
-            te->addr_mask = (1 << iommumr->min_page_sz) - 1;
+            te->addr_mask = (static_cast<uint64_t>(1) << iommumr->min_page_sz) - 1;
             te->iova = addr & ~te->addr_mask;
             te->translated_addr = (addr & ~te->addr_mask) + base_addr;
             te->perm = qemu::IOMMUMemoryRegion::IOMMU_RW;
