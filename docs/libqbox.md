@@ -138,15 +138,23 @@ port parameter instead.
 
 ## GDB Support
 
-To attach GDB to a CPU, set the `gdb_port` CCI parameter to a
+To attach GDB, set the `gdb_port` CCI parameter on the **QEMU instance** to a
 non-zero value:
 
 ```bash
-./build/platforms/platforms-vp --gs_luafile conf.lua -p platform.cpu_1.gdb_port=1234
+./build/platforms/platforms-vp --gs_luafile conf.lua -p platform.qemu_inst.gdb_port=1234
 ```
 
-This opens a GDB server on port 1234 for `cpu_1`. The virtual
-platform will wait for GDB to connect before proceeding.
+This opens a GDB server on port 1234 for that instance. Every CPU of the instance
+appears as a GDB thread (`info threads` in GDB), so one port debugs all of them.
+The virtual platform will wait for GDB to connect before proceeding.
+
+`gdb_port` belongs to the instance rather than to a CPU because QEMU's GDB stub
+state is global to an instance -- there can only be one stub per instance.
+Setting it on a CPU still works but is **deprecated**: the value is forwarded to
+the owning instance and a warning is logged. Setting it on two CPUs of the same
+instance used to abort the process (`gdbstub: couldn't create chardev`); it now
+warns and keeps the first value.
 
 ## Supported Components
 
@@ -179,7 +187,7 @@ The following parameters are shared by most ARM A-profile CPUs
 | psci_conduit | string | "disabled" | PSCI conduit: "disabled", "hvc", or "smc" |
 | rvbar | uint64_t | 0 | Reset vector base address register |
 | cntfrq_hz | uint64_t | 0 | Generic Timer CNTFRQ in Hz |
-| gdb_port | (from base) | 0 | GDB server port (non-zero to enable) |
+| gdb_port | (from base) | 0 | **Deprecated** -- set `gdb_port` on the QEMU instance instead. Forwarded there with a warning. |
 
 Note: Cortex-M and Cortex-R CPUs have different parameter sets.
 
