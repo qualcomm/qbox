@@ -136,6 +136,7 @@ public:
 
     void lock_iothread();
     void unlock_iothread();
+    bool is_iothread_locked() const;
 
     RcuReadLock rcu_read_lock_new();
 

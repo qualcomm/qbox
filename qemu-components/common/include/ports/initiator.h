@@ -210,8 +210,17 @@ protected:
         init_payload(ltrans, tlm::TLM_IGNORE_COMMAND, base_addr + addr, &tmp, 0);
         ltrans.set_extension(&lu_dmi);
         tlm::tlm_dmi ldmi_data;
-
-        if ((*this)->get_direct_mem_ptr(ltrans, ldmi_data)) {
+        bool dmi_valid = false;
+        bool iothread_locked = m_inst.get().is_iothread_locked();
+        if (iothread_locked) {
+            m_inst.get().unlock_iothread();
+        }
+        const bool completed = m_on_sysc.run_on_sysc(
+            [&] { dmi_valid = (*this)->get_direct_mem_ptr(ltrans, ldmi_data); });
+        if (iothread_locked) {
+            m_inst.get().lock_iothread();
+        }
+        if (completed && dmi_valid) {
             if (lu_dmi.has_dmi(gs::tlm_dmi_ex::dmi_iommu)) {
                 // Add te to 'special' IOMMU address space
                 tlm::tlm_dmi lu_dmi_data = lu_dmi.get_last(gs::tlm_dmi_ex::dmi_iommu);
@@ -366,14 +375,20 @@ protected:
 
         SCP_INFO(()) << "DMI request for address 0x" << std::hex << trans.get_address();
 
-        // It is 'safer' from the SystemC perspective to  m_on_sysc.run_on_sysc([this,
-        // &trans]{...}).
         gs::UnderlyingDMITlmExtension u_dmi;
 
         trans.set_extension(&u_dmi);
-        bool dmi_valid = (*this)->get_direct_mem_ptr(trans, dmi_data);
+        bool dmi_valid = false;
+        const bool iothread_locked = m_inst.get().is_iothread_locked();
+        if (iothread_locked) {
+            m_inst.get().unlock_iothread();
+        }
+        const bool completed = m_on_sysc.run_on_sysc([&] { dmi_valid = (*this)->get_direct_mem_ptr(trans, dmi_data); });
+        if (iothread_locked) {
+            m_inst.get().lock_iothread();
+        }
         trans.clear_extension(&u_dmi);
-        if (!dmi_valid) {
+        if (!completed || !dmi_valid) {
             SCP_INFO(())("No DMI available for {:x}", trans.get_address());
             /* this is used by the map function below
              * - a better plan may be to tag memories to be mapped so we dont need this
