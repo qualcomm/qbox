@@ -507,7 +507,7 @@ private:
         case 3:
             req.stage = 1;
             req.s2_enabled = true;
-            req.s2_cb = SMMU_CBAR[cb][CBAR_VMID];
+            req.s2_cb = (static_cast<uint32_t>(SMMU_CBAR[cb]) >> 8) & 0xff;
             s2_cb = req.s2_cb;
             break;
         }
