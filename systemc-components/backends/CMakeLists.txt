@@ -1,4 +1,6 @@
-add_subdirectory(char_backend_socket)
+if(QBOX_ENABLE_CROW_ASIO)
+    add_subdirectory(char_backend_socket)
+endif()
 add_subdirectory(char_backend_stdio)
 add_subdirectory(loop_back_backend)
 add_subdirectory(char_backend_file)
