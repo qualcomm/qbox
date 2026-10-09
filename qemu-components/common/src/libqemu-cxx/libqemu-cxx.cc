@@ -196,12 +196,27 @@ Chardev LibQemu::chardev_new(const char* label, const char* type)
     return ret;
 }
 
+Chardev LibQemu::chardev_new(std::string_view label, std::string_view type)
+{
+    std::string l(label);
+    std::string t(type);
+
+    return chardev_new(l.c_str(), t.c_str());
+}
+
 Clock LibQemu::clock_new(QemuObject* o, const char* label)
 {
     QemuClock* qemu_clock = m_int->exports().clock_new(o, label);
     Clock ret(Object(reinterpret_cast<QemuObject*>(qemu_clock), m_int));
 
     return ret;
+}
+
+Clock LibQemu::clock_new(QemuObject* o, std::string_view label)
+{
+    std::string l(label);
+
+    return clock_new(o, l.c_str());
 }
 
 bool LibQemu::clock_set_hz(Clock& clock, uint64_t hz)
