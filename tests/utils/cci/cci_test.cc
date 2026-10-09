@@ -12,10 +12,13 @@
 #include <libgsutils.h>
 #include <argparser.h>
 #include <gtest/gtest.h>
+#include <memory>
 #include <systemc>
 #include <scp/report.h>
+
 // global for test
 int set_value = 0;
+gs::ConfigurableBroker* test_broker = nullptr;
 /*
  * Module with a structural param
  */
@@ -35,6 +38,14 @@ public:
             EXPECT_EQ(m_irqs, 42);
         }
     }
+};
+
+class ReexposedPresetParamModule : public sc_core::sc_module
+{
+public:
+    cci::cci_param<int> value;
+
+    ReexposedPresetParamModule(const sc_core::sc_module_name& n): sc_core::sc_module(n), value("value", 0) {}
 };
 
 /*
@@ -101,6 +112,8 @@ int sc_main(int argc, char* argv[])
     gs::ConfigurableBroker m_broker{};
     SCP_INFO("main") << "SCP_INFO(\"main\") after broker construction";
 
+    test_broker = &m_broker;
+
     cci::cci_originator m_originator("MyConfigTool");
     auto broker_h = m_broker.create_broker_handle(m_originator);
     ArgParser ap{ broker_h, argc, argv };
@@ -142,4 +155,55 @@ TEST(ccitest, three)
 {
     top_level3 = new TopLevelThree("MyTopThree");
     EXPECT_EQ(set_value, 42);
+}
+
+TEST(ccitest, locked_preset_value_is_not_cached)
+{
+    const std::string name = "locked_preset_value";
+    cci::cci_originator originator("locked_preset_value_test");
+
+    test_broker->set_preset_cci_value(name, cci::cci_value(1), originator);
+    test_broker->lock_preset_value(name);
+    EXPECT_THROW(test_broker->set_preset_cci_value(name, cci::cci_value(2), originator), sc_core::sc_report);
+
+    auto values = test_broker->get_unconsumed_preset_values(
+        [&name](const cci::cci_name_value_pair& value) { return value.first == name; });
+    ASSERT_EQ(std::distance(values.begin(), values.end()), 1);
+    EXPECT_EQ(values.begin()->second.get_int(), 1);
+}
+
+TEST(ccitest, filtered_unconsumed_values_evaluate_predicate_once)
+{
+    const std::string name = "stateful_filtered_preset_value";
+    cci::cci_originator originator("stateful_filtered_preset_value_test");
+    test_broker->set_preset_cci_value(name, cci::cci_value(1), originator);
+
+    unsigned int predicate_calls = 0;
+    auto values = test_broker->get_unconsumed_preset_values(
+        [&predicate_calls, &name](const cci::cci_name_value_pair& value) {
+            if (value.first != name) {
+                return false;
+            }
+            return ++predicate_calls == 1;
+        });
+
+    ASSERT_EQ(std::distance(values.begin(), values.end()), 1);
+    EXPECT_EQ(predicate_calls, 1);
+}
+
+TEST(ccitest, reexposed_preset_value_keeps_cached_value)
+{
+    const std::string name = "reexposed_preset_value.value";
+    cci::cci_originator originator("reexposed_preset_value_test");
+    test_broker->set_preset_cci_value(name, cci::cci_value(42), originator);
+
+    {
+        auto param_module = std::make_unique<ReexposedPresetParamModule>("reexposed_preset_value");
+        EXPECT_EQ(param_module->value.get_value(), 42);
+    }
+
+    auto values = test_broker->get_unconsumed_preset_values(
+        [&name](const cci::cci_name_value_pair& value) { return value.first == name; });
+    ASSERT_EQ(std::distance(values.begin(), values.end()), 1);
+    EXPECT_EQ(values.begin()->second.get_int(), 42);
 }

@@ -47,7 +47,9 @@
 namespace gs {
 namespace ModuleFactory {
 
-class ContainerBase : public virtual sc_core::sc_module, public transaction_forwarder_if<CONTAINER>
+class ContainerBase : public virtual sc_core::sc_module,
+                      public transaction_forwarder_if<CONTAINER>,
+                      public container_module
 {
     /**
      * @brief construct a module using the pre-register CCI functor, with typed arguments from a CCI
@@ -70,6 +72,9 @@ private:
     mutable std::map<std::string, std::set<std::string>>
         m_per_pass_nested_deps_cache; // Per-pass cache: container_name -> deps (cleared each pass)
     mutable std::map<std::string, bool> m_is_container_type_cache; // Cache for is_container_type() results
+    mutable std::map<std::string, std::set<std::string>> m_cci_children_cache;
+    mutable std::map<std::string, std::vector<std::pair<std::string, cci::cci_value>>> m_cci_bind_params_cache;
+    mutable bool m_cci_children_cache_initialized = false;
 
 public:
     SCP_LOGGER(());
@@ -132,10 +137,11 @@ public:
         bool result = false;
         std::string container_name = std::string(this->name());
 
-        // If the name starts with the container's name followed by a dot, it's relative
+        // A path rooted at this container is already a fully qualified
+        // SystemC object name and must not be prefixed again.
         if (name.size() > container_name.size() && name.substr(0, container_name.size()) == container_name &&
             name[container_name.size()] == '.') {
-            result = false;
+            result = true;
         } else if (name.find('.') != std::string::npos) {
             // If the name contains dots, it's a hierarchical path
             // Get the parent container name (e.g., "parent" from "parent.child_container")
@@ -258,7 +264,7 @@ public:
      */
     void name_bind(sc_core::sc_module* m)
     {
-        for (auto param : sc_cci_children(m->name())) {
+        for (const auto& param : get_cci_children(m->name())) {
             /* We should have a param like
              *  foo = &a.baa
              * foo should relate to an object in this model. a.b.bar should relate to an other
@@ -296,6 +302,56 @@ public:
         }
     }
 
+private:
+    void populate_cci_children_cache() const
+    {
+        m_cci_children_cache.clear();
+        m_cci_bind_params_cache.clear();
+        const std::string container_prefix = std::string(name()) + ".";
+        for (const auto& value : m_broker.get_unconsumed_preset_values()) {
+            if (value.first.find(container_prefix) != 0) {
+                continue;
+            }
+
+            const std::string relative_name = value.first.substr(container_prefix.size());
+            const size_t module_end = relative_name.find('.');
+            if (module_end == std::string::npos) {
+                continue;
+            }
+            const size_t child_end = relative_name.find('.', module_end + 1);
+            const std::string module_name = container_prefix + relative_name.substr(0, module_end);
+            const std::string child_name = relative_name.substr(module_end + 1, child_end - module_end - 1);
+            m_cci_children_cache[module_name].insert(child_name);
+            if (relative_name.size() > 5 && relative_name.compare(relative_name.size() - 5, 5, ".bind") == 0) {
+                m_cci_bind_params_cache[module_name].emplace_back(value);
+            }
+        }
+        m_cci_children_cache_initialized = true;
+    }
+
+    const std::set<std::string>& get_cci_children(const std::string& object_name) const
+    {
+        if (!m_cci_children_cache_initialized) {
+            populate_cci_children_cache();
+        }
+
+        static const std::set<std::string> no_children;
+        const auto cache_it = m_cci_children_cache.find(object_name);
+        return cache_it == m_cci_children_cache.end() ? no_children : cache_it->second;
+    }
+
+    const std::vector<std::pair<std::string, cci::cci_value>>& get_cci_bind_params(const std::string& object_name) const
+    {
+        if (!m_cci_children_cache_initialized) {
+            populate_cci_children_cache();
+        }
+
+        static const std::vector<std::pair<std::string, cci::cci_value>> no_bind_params;
+        const auto cache_it = m_cci_bind_params_cache.find(object_name);
+        return cache_it == m_cci_bind_params_cache.end() ? no_bind_params : cache_it->second;
+    }
+
+public:
     /**
      * FIXME: There should be a better way of doing that.Trying to bind every possible
      * combination of socket types is not scalable nor readable solution.
@@ -355,6 +411,28 @@ public:
         }
     }
 
+private:
+    bool is_container_config(const std::string& config_name)
+    {
+        if (m_broker.has_preset_value(config_name + ".dont_construct")) {
+            return dynamic_cast<container_module*>(sc_core::sc_find_object(config_name.c_str())) != nullptr;
+        }
+
+        const cci::cci_value module_type = m_broker.get_preset_cci_value(config_name + ".moduletype");
+        if (!module_type.is_string()) {
+            return false;
+        }
+
+        const std::string factory_name = CCI_GS_MF_NAME + std::string(module_type.get_string());
+        // Dynamic factories must be registered before planning nested dependencies.
+        if (!m_broker.get_param_handle(factory_name).is_valid()) {
+            register_module_config_from_dylib(config_name);
+        }
+        cci::cci_param_typed_handle<gs::cci_constructor_vl> factory(m_broker.get_param_handle(factory_name));
+        return factory.is_valid() && (*factory).is_container();
+    }
+
+public:
     /**
      * @brief Check if a module is a container type
      *
@@ -369,18 +447,7 @@ public:
             return cache_it->second;
         }
 
-        std::string module_name = std::string(sc_module::name());
-        std::string mod_type_name = module_name + "." + name + ".moduletype";
-
-        bool result = false;
-        if (m_broker.has_preset_value(mod_type_name)) {
-            cci::cci_value cci_type = m_broker.get_preset_cci_value(mod_type_name);
-            if (cci_type.is_string()) {
-                std::string mod_type = cci_type.get_string();
-                result = (mod_type == "Container" || mod_type == "ContainerWithArgs" ||
-                          mod_type == "ContainerDeferModulesConstruct" || mod_type == "container_builder");
-            }
-        }
+        const bool result = is_container_config(std::string(sc_module::name()) + "." + name);
 
         // Cache the result
         m_is_container_type_cache[name] = result;
@@ -497,18 +564,12 @@ public:
 
             // Check bind parameters only if this child is a container type
             bool child_is_container = false;
-            auto container_cache_it = m_is_container_type_cache.find(child);
+            auto container_cache_it = m_is_container_type_cache.find(child_config_name);
             if (container_cache_it != m_is_container_type_cache.end()) {
                 child_is_container = container_cache_it->second;
             } else {
-                if (m_broker.has_preset_value(child_config_name + ".moduletype")) {
-                    cci::cci_value mt = m_broker.get_preset_cci_value(child_config_name + ".moduletype");
-                    if (mt.is_string()) {
-                        std::string moduletype = mt.get_string();
-                        child_is_container = (moduletype == "Container" || moduletype == "container_builder");
-                    }
-                }
-                m_is_container_type_cache[child] = child_is_container;
+                child_is_container = is_container_config(child_config_name);
+                m_is_container_type_cache[child_config_name] = child_is_container;
             }
 
             if (child_is_container) {
@@ -761,58 +822,46 @@ public:
                 m_per_pass_nested_deps_cache.clear();
 
                 std::map<std::string, std::set<std::string>> depends_on_me;
-                std::map<std::string, std::set<std::string>> bind_reverse_index;
-
                 for (const auto& source_mod : todo) {
                     if (is_container_type(source_mod)) {
                         continue;
                     }
 
-                    std::string source_full_path = module_name + "." + source_mod;
-
-                    // Check if source module is a router
-                    std::string source_modtype;
-                    auto source_type_param = m_broker.get_preset_cci_value(source_full_path + ".moduletype");
-                    if (source_type_param.is_string()) {
-                        source_modtype = source_type_param.get_string();
+                    const std::string source_full_path = module_name + "." + source_mod;
+                    const cci::cci_value source_type = m_broker.get_preset_cci_value(source_full_path + ".moduletype");
+                    if (!source_type.is_string()) {
+                        continue;
                     }
-                    bool source_is_router = (source_modtype.find("router") != std::string::npos ||
-                                             source_modtype.find("Router") != std::string::npos);
 
-                    auto mod_params = m_broker.get_unconsumed_preset_values(
-                        [&source_full_path](const std::pair<std::string, cci::cci_value>& iv) {
-                            return iv.first.find(source_full_path + ".") == 0;
-                        });
+                    const std::string source_modtype = source_type.get_string();
+                    if (source_modtype.find("router") == std::string::npos &&
+                        source_modtype.find("Router") == std::string::npos) {
+                        continue;
+                    }
 
-                    for (const auto& param : mod_params) {
-                        const std::string& param_name = param.first;
-                        const cci::cci_value& param_value = param.second;
+                    for (const auto& param : get_cci_bind_params(source_full_path)) {
+                        const cci::cci_value& bind = param.second;
+                        if (!bind.is_string()) {
+                            continue;
+                        }
 
-                        if (param_name.length() > 5 && param_name.substr(param_name.length() - 5) == ".bind") {
-                            if (param_value.is_string()) {
-                                std::string bind_target = param_value.get_string();
-                                if (bind_target.length() > 0 && bind_target[0] == '&') {
-                                    std::string ref_path = bind_target.substr(1);
-                                    std::string target_mod;
+                        std::string target = bind.get_string();
+                        if (target.empty() || target.front() != '&') {
+                            continue;
+                        }
 
-                                    if (ref_path.find(module_name + ".") == 0) {
-                                        target_mod = ref_path.substr(module_name.length() + 1);
-                                    } else {
-                                        target_mod = ref_path;
-                                    }
+                        target.erase(0, 1);
+                        const std::string module_prefix = module_name + ".";
+                        if (target.find(module_prefix) == 0) {
+                            target.erase(0, module_prefix.size());
+                        }
+                        const size_t target_end = target.find('.');
+                        if (target_end != std::string::npos) {
+                            target.erase(target_end);
+                        }
 
-                                    size_t dot_pos = target_mod.find('.');
-                                    if (dot_pos != std::string::npos) {
-                                        target_mod = target_mod.substr(0, dot_pos);
-                                    }
-
-                                    // Only track bind dependencies for router modules
-                                    if (source_is_router &&
-                                        std::find(todo.begin(), todo.end(), target_mod) != todo.end()) {
-                                        bind_reverse_index[target_mod].insert(source_mod);
-                                    }
-                                }
-                            }
+                        if (std::find(todo.begin(), todo.end(), target) != todo.end()) {
+                            depends_on_me[target].insert(source_mod);
                         }
                     }
                 }
@@ -847,13 +896,6 @@ public:
                             if (std::find(todo.begin(), todo.end(), sibling_name) != todo.end()) {
                                 depends_on_me[sibling_name].insert(mod);
                             }
-                        }
-                    }
-
-                    auto bind_it = bind_reverse_index.find(mod);
-                    if (bind_it != bind_reverse_index.end()) {
-                        for (const auto& bind_source : bind_it->second) {
-                            depends_on_me[mod].insert(bind_source);
                         }
                     }
                 }
@@ -930,11 +972,17 @@ public:
 
     void register_module_from_dylib(sc_core::sc_module_name name)
     {
+        register_module_config_from_dylib(std::string(sc_module::name()) + "." + std::string(name));
+    }
+
+private:
+    void register_module_config_from_dylib(const std::string& config_name)
+    {
         std::string libname;
         std::vector<std::string> lib_types = { ".moduletype", ".dylib_path" };
 
         for (const auto& type : lib_types) {
-            const std::string base_name = std::string(sc_module::name()) + "." + std::string(name) + type;
+            const std::string base_name = config_name + type;
             if (m_broker.has_preset_value(base_name)) {
                 libname = std::string(m_broker.get_preset_cci_value(base_name).get_string()) + "." +
                           std::string(m_library_loader.get_lib_ext());
@@ -957,8 +1005,11 @@ public:
         }
     }
 
+public:
     void ModulesConstruct(void)
     {
+        // Snapshot the configuration used for construction planning.
+        populate_cci_children_cache();
         for (auto name : PriorityConstruct()) {
             auto mod_type_name = std::string(sc_module::name()) + "." + name + ".moduletype";
             if (m_broker.has_preset_value(mod_type_name)) {
@@ -996,6 +1047,8 @@ public:
             }
         }
 
+        // Child constructors can create bindings and hide redirected aliases.
+        populate_cci_children_cache();
         for (auto mod : m_allModules) {
             name_bind(mod);
         }

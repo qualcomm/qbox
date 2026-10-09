@@ -27,6 +27,7 @@ public:
 
 public:
     std::unique_ptr<Container> m_platform;
+    std::unique_ptr<ContainerDeferModulesConstruct> m_reuse_platform;
 };
 
 #endif

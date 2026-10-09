@@ -31,6 +31,7 @@ public:
 protected:
     void dispatch(const std::string& _name);
     void redirect_socket_params(const std::string& _name);
+    static std::string get_socket_redirect_cycle(const std::map<std::string, std::string>& socket_redirects);
     std::string replace_all(std::string str, const std::string& from, const std::string& to);
 
     template <class T>
