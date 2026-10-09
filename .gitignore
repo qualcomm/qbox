@@ -12,3 +12,4 @@ TAGS
 __pycache__
 .worktrees
 *.zip
+/.cache

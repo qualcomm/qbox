@@ -21,19 +21,19 @@ if { [ -e /etc/os-release ] && OS_RELEASE="/etc/os-release"; } || \
                 libglib2.0-dev libjpeg-turbo8-dev libpixman-1-dev libsdl2-dev \
                 libslirp-dev libasio-dev  libvirglrenderer-dev libzip-dev \
                 lld llvm meson ninja-build ocl-icd-opencl-dev python3 python3-dev \
-                python3-venv
+                python3-venv bison flex
         elif [ "${VERSION_ID}" = "22.04" ]; then
             apt install cmake g++ gcc git libasio-dev libelf-dev libepoxy-dev \
                 libglib2.0-dev libjpeg-turbo8-dev libpixman-1-dev libsdl2-dev \
                 libslirp-dev libasio-dev libvirglrenderer-dev libzip-dev \
                 lld llvm meson ninja-build ocl-icd-opencl-dev python3 python3-dev \
-                python3-tomli python3-venv
+                python3-tomli python3-venv bison flex
         elif [ "${VERSION_ID}" = "20.04" ]; then
             apt install cmake g++ gcc git libasio-dev libelf-dev libepoxy-dev \
                 libglib2.0-dev libjpeg-turbo8-dev libpixman-1-dev libsdl2-dev \
                 libslirp-dev libasio-dev libvirglrenderer-dev libzip-dev \
                 lld llvm meson ninja-build ocl-icd-opencl-dev python3 python3-dev \
-                python3-pip python3-venv
+                python3-pip python3-venv bison flex
             pip install --user tomli
         else
             unsupported_operating_system
