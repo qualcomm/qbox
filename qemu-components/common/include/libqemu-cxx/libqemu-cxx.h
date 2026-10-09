@@ -9,7 +9,7 @@
 #pragma once
 
 #include <string>
-#include <unordered_map>
+#include <string_view>
 #include <memory>
 #include <functional>
 #include <set>
@@ -177,7 +177,9 @@ public:
     std::shared_ptr<Timer> timer_new();
 
     Chardev chardev_new(const char* label, const char* type);
+    Chardev chardev_new(std::string_view label, std::string_view type);
     Clock clock_new(QemuObject* o, const char* label);
+    Clock clock_new(QemuObject* o, std::string_view label);
     bool clock_set_hz(Clock& clock, uint64_t hz);
     void qdev_connect_clock_in(QemuObject* o, const char* name, Clock& clk);
 
@@ -653,6 +655,7 @@ public:
     void set_prop_chardev(const char* name, Chardev chr);
     void set_prop_uint_array(const char* name, std::vector<unsigned int> vec);
     void set_prop_string(const char* name, const char* value);
+    void set_prop_string(std::string_view name, std::string_view value);
 };
 
 class SysBusDevice : public Device
