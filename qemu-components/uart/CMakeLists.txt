@@ -1,3 +1,4 @@
 add_subdirectory(16550)
 add_subdirectory(qemu_pl011)
+add_subdirectory(qemu_cmsdk_apb_uart)
 add_subdirectory(sifive_uart)
