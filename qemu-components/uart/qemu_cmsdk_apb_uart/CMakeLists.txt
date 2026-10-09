@@ -1,0 +1,1 @@
+gs_create_dymod(qemu_cmsdk_apb_uart)
