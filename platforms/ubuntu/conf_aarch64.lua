@@ -147,7 +147,7 @@ platform = {
         { bin_file=top().."fw/Artifacts/Image.bin", address=_KERNEL64_LOAD_ADDR };
         { bin_file=top().."fw/Artifacts/ubuntu.dtb", address=_DTB_LOAD_ADDR };
         { bin_file=top().."fw/Artifacts/image_ext4_initrd.img", address= _INITRD_LOAD_ADDR };
-        { data=_bootloader_aarch64, address = INITIAL_DDR_SPACE};    
+        { data=_bootloader_aarch64, address = INITIAL_DDR_SPACE};
     };
 };
 
