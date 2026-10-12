@@ -139,7 +139,8 @@
 
         status("Connecting");
 
-        let url = 'ws://' + host + ':' + port;
+        const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
+        let url = `${wsProtocol}//${host}:${port}`;
 
         // Creating a new RFB object will start a new connection
         rfb = new RFB.default(document.getElementById('screen'), url,

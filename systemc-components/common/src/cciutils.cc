@@ -141,6 +141,7 @@ void gs::cci_clear_unused(cci::cci_broker_handle broker, std::string name)
 std::vector<std::function<cci::cci_param<gs::cci_constructor_vl>*()>>* gs::ModuleFactory::GetAvailableModuleList()
 {
     static std::vector<std::function<cci::cci_param<gs::cci_constructor_vl>*()>> list;
+    // nosemgrep: reusable-workflows.semgrep_rules.cxx.locret.ret.local-address-returned -- staticlifetime
     return &list;
 }
 

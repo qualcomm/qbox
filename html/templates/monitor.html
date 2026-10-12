@@ -74,7 +74,8 @@
     </div>
 
     <script>
-        var sock = new WebSocket("ws://" + location.host + "/ws");
+        const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
+        var sock = new WebSocket(`${wsProtocol}//${location.host}/ws`);
         sock.onopen = ()=>{
             console.log('open websocket')
         }

@@ -225,8 +225,8 @@ void sc_internal_async_wakeup() { gs::global_pause::get().async_wakeup(); }
 
 #ifndef SC_HAS_ASYNC_ATTACH_SUSPENDING
 /* Provide a 'global' attach/detach mechanism */
-bool async_attach_suspending(sc_core::sc_prim_channel* p) { gs::global_pause::get().attach_suspending(p); }
-bool async_detach_suspending(sc_core::sc_prim_channel* p) { gs::global_pause::get().detach_suspending(p); }
+bool async_attach_suspending(sc_core::sc_prim_channel* p) { return gs::global_pause::get().attach_suspending(p); }
+bool async_detach_suspending(sc_core::sc_prim_channel* p) { return gs::global_pause::get().detach_suspending(p); }
 #endif
 } // namespace sc_core
 

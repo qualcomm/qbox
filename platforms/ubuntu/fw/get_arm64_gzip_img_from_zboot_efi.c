@@ -127,7 +127,7 @@ int main(int argc, char** argv)
         goto out;
     }
 
-    input_buffer = (uint8_t*)malloc(file_size * sizeof(uint8_t));
+    input_buffer = (uint8_t*)calloc(file_size, sizeof(*input_buffer));
     if (!input_buffer) {
         fprintf(stderr, "failed to allocate input_buffer with size: %ld, Error: %s\n", file_size, strerror(errno));
         status = EXIT_FAILURE;
