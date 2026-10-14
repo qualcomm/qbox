@@ -224,6 +224,7 @@
     </div>
 
     <script>
+        const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
 
         var sock;
         var term;
@@ -278,7 +279,7 @@
                 cursorInactiveStyle: "outline",
 
             });
-            tw.sock = new WebSocket("ws://" + location.host + "/biflow/" + biflowName);
+            tw.sock = new WebSocket(`${wsProtocol}//${location.host}/biflow/${biflowName}`);
 
             tw.sock.onmessage = (e) => {
                 tw.term.write(e.data);
@@ -316,7 +317,7 @@
         function setupVnc(data) {
             const qmpBiflow = data.biflows.find(biflow => biflow.startsWith("platform.qmp_json"));
             if (qmpBiflow) {
-                qmpSock = new WebSocket("ws://" + location.host + "/biflow/" + qmpBiflow);
+                qmpSock = new WebSocket(`${wsProtocol}//${location.host}/biflow/${qmpBiflow}`);
                 qmpSock.onopen = () => {
                     console.log("WebSocket connection established");
                 };
@@ -480,7 +481,7 @@
                 portCell.textContent = server_info.service
 
                 const linkCell = row.insertCell(4);
-                linkCell.textContent = `ws://${location.hostname}:${server_info.service}`
+                linkCell.textContent = `${wsProtocol}//${location.hostname}:${server_info.service}`
 
                 button.onclick = () => {
                     if (button.textContent === 'Open VNC Client') {
@@ -611,7 +612,7 @@
                 if (sock) sock.close();
                 if (selectedBiflow) {
                     term.reset();
-                    sock = new WebSocket("ws://" + location.host + "/biflow/" + selectedBiflow);
+                    sock = new WebSocket(`${wsProtocol}//${location.host}/biflow/${selectedBiflow}`);
                     sock.onmessage = (e) => {
                         term.write(e.data);
                     }
@@ -639,7 +640,7 @@
                 if ((!sock || sock.readyState > 1) && selectedBiflow) {
                     term.reset();
                     if (sock) sock.close();
-                    sock = new WebSocket("ws://" + location.host + "/biflow/" + selectedBiflow);
+                    sock = new WebSocket(`${wsProtocol}//${location.host}/biflow/${selectedBiflow}`);
                     sock.onmessage = (e) => {
                         term.write(e.data);
                     }

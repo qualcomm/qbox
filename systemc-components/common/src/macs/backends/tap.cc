@@ -78,7 +78,7 @@ void NetworkBackendTap::close()
     m_fd = -1;
 }
 
-void* NetworkBackendTap::rcv_thread()
+void NetworkBackendTap::rcv_thread()
 {
     for (;;) {
         Payload* frame = new Payload(9000);

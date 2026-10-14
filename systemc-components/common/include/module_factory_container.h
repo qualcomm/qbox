@@ -231,6 +231,7 @@ public:
     }
 
     template <typename I, typename T>
+    // nosemgrep: reusable-workflows.semgrep_rules.cxx.funcret.gen.non-void-function-bare-return
     bool try_bind(sc_core::sc_object* i_obj, sc_core::sc_object* t_obj)
     {
         auto i = dynamic_cast<I*>(i_obj);

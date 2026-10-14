@@ -23,7 +23,7 @@ private:
     int m_fd;
 
     void open(std::string& tun);
-    void* rcv_thread();
+    void rcv_thread();
     void rcv();
     void close();
 
