@@ -76,7 +76,8 @@ within the UFS controller.
 ufs_0 = {
     moduletype = "ufs",
     args = {"&platform.qemu_inst"},
-    q_socket = {address = 0x1c140000, size = 0x10000, bind = "&router.initiator_socket"},
+    -- mem.size is required: it sets the UFS MMIO aperture size.
+    mem = {address = 0x1c140000, size = 0x10000, bind = "&router.initiator_socket"},
     irq_out = {bind = "&gic_0.spi_in_20"},
 };
 

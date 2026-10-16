@@ -69,6 +69,7 @@ protected:
     cci::cci_param<uint8_t> p_nutmrs;
     cci::cci_param<bool> p_mcq;
     cci::cci_param<uint8_t> p_mcq_maxq;
+    cci::cci_param<uint32_t> p_mem_size;
     std::vector<Device*> m_devices;
 
 public:
@@ -84,6 +85,7 @@ public:
         , p_nutmrs("nutmrs", 8, "number of UTP task management request slots")
         , p_mcq("mcq", false, "multiple command queue support")
         , p_mcq_maxq("mcq_maxq", 2, "MCQ maximum number of queues")
+        , p_mem_size("mem.size", 0, "UFS sysbus MMIO aperture size")
     {
         set_id(name());
         reset.register_value_changed_cb([this](bool value) {
@@ -113,6 +115,7 @@ public:
         if (!p_nutmrs.is_default_value()) m_dev.set_prop_uint("nutmrs", p_nutmrs.get_value());
         if (!p_mcq.is_default_value()) m_dev.set_prop_bool("mcq", p_mcq.get_value());
         if (!p_mcq_maxq.is_default_value()) m_dev.set_prop_uint("mcq-maxq", p_mcq_maxq.get_value());
+        m_dev.set_prop_uint("mmio-size", p_mem_size.get_value());
         if (dma_socket.size() > 0) {
             dma_socket.init(m_dev, "dma");
         }
