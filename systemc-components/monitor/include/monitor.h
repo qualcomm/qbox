@@ -22,13 +22,14 @@
 #include <thread>
 #include <future>
 #include <qkmultithread.h>
-#include <mcips-plugin.h>
 #include <chrono>
 #include <atomic>
 #include <ports/biflow-socket.h>
 
 #define MAX_ASIO_BUF_LEN (1024ULL * 16ULL)
 #define MAX_BUFFER       1000
+
+class McipsPlugin;
 
 namespace gs {
 
