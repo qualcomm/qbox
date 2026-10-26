@@ -22,6 +22,7 @@
 #include "onmethod.h"
 #include "elf_loader.h"
 #include "zip_loader.h"
+#include "dtb_loader.h"
 
 #include <cinttypes>
 #include <list>
@@ -279,6 +280,15 @@ protected:
                 str_load(data.get_value(), addr);
                 read = true;
             }
+            if (m_broker.has_preset_value(name + ".dtb")) {
+                SCP_FATAL(()) << "'" << name << ".dtb' must be a table {base = ..., overlays = {...}}; "
+                              << "use 'bin_file' to load a prebuilt DTB";
+                return;
+            }
+            if (sc_cci_children((name + ".dtb").c_str()).size()) {
+                dtb_load(name + ".dtb", addr);
+                read = true;
+            }
             if (sc_cci_children((name + ".data").c_str()).size()) {
                 bool byte_swap = false;
                 gs::cci_get<bool>(m_broker, name + ".byte_swap", byte_swap);
@@ -410,6 +420,78 @@ private:
                 break;
             }
         }
+    }
+
+    /**
+     * @brief Build a DTB from a base and ordered overlays, then load it.
+     */
+    void dtb_load(const std::string& param, uint64_t addr)
+    {
+        for (const std::string& child : sc_cci_children(param.c_str())) {
+            if (child != "base" && child != "overlays" && child != "dump") {
+                SCP_FATAL(()) << "'" << param << "': unknown key '" << child << "' (expected base, overlays, dump)";
+                return;
+            }
+        }
+
+        std::string base;
+        if (!m_broker.has_preset_value(param + ".base")) {
+            SCP_FATAL(()) << "'" << param << "' requires a 'base' DTB file";
+            return;
+        }
+        if (!gs::cci_get<std::string>(m_broker, param + ".base", base) || base.empty()) {
+            SCP_FATAL(()) << "'" << param << ".base' must be a file name";
+            return;
+        }
+
+        std::vector<std::string> overlays;
+        const std::string ov_key = param + ".overlays";
+        if (m_broker.has_preset_value(ov_key)) {
+            SCP_FATAL(()) << "'" << ov_key << "' must be a list of file names";
+            return;
+        }
+        // sc_cci_children returns sorted strings ("10" < "2"), so count the
+        // entries and require exactly the indices 0..N-1.
+        const size_t n_overlays = sc_cci_children(ov_key.c_str()).size();
+        for (size_t i = 0; i < n_overlays; ++i) {
+            const std::string key = ov_key + "." + std::to_string(i);
+            std::string overlay;
+            if (!m_broker.has_preset_value(key) || !gs::cci_get<std::string>(m_broker, key, overlay) ||
+                overlay.empty()) {
+                SCP_FATAL(()) << "'" << ov_key << "' must be a list of file names (bad or missing entry " << i + 1
+                              << ")";
+                return;
+            }
+            overlays.push_back(overlay);
+        }
+
+        std::string dump;
+        const bool has_dump = m_broker.has_preset_value(param + ".dump");
+        if (has_dump && !gs::cci_get<std::string>(m_broker, param + ".dump", dump)) {
+            SCP_FATAL(()) << "'" << param << ".dump' must be a file name";
+            return;
+        }
+
+        std::string error;
+        std::vector<uint8_t> dtb = gs::dtb_build(base, overlays, error);
+        if (dtb.empty()) {
+            SCP_FATAL(()) << "'" << param << "': " << error;
+            return;
+        }
+
+        if (!dump.empty()) {
+            std::ofstream out(dump, std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char*>(dtb.data()), static_cast<std::streamsize>(dtb.size()));
+            out.close();
+            if (out.fail()) {
+                SCP_FATAL(()) << "'" << param << "': unable to write '" << dump << "'";
+                return;
+            }
+        }
+
+        SCP_INFO(())
+        ("Loading DTB {} with {} overlay(s), size {:#x}, to addr: {:#x}", base, overlays.size(), dtb.size(), addr);
+        send(addr, dtb.data(), dtb.size());
     }
 
 public:

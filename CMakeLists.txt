@@ -212,6 +212,24 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBELF REQUIRED IMPORTED_TARGET libelf)
 pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
 pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0)
+# libfdt-dev on Debian/Ubuntu does not ship a pkg-config file. Use it as an
+# optional hint where available, then locate the header and library directly.
+pkg_check_modules(PC_LIBFDT QUIET libfdt)
+find_path(LIBFDT_INCLUDE_DIR NAMES libfdt.h
+    HINTS ${PC_LIBFDT_INCLUDEDIR} ${PC_LIBFDT_INCLUDE_DIRS})
+find_library(LIBFDT_LIBRARY NAMES fdt libfdt
+    HINTS ${PC_LIBFDT_LIBDIR} ${PC_LIBFDT_LIBRARY_DIRS})
+if(NOT LIBFDT_INCLUDE_DIR OR NOT LIBFDT_LIBRARY)
+    message(FATAL_ERROR "libfdt not found (install libfdt-dev or dtc)")
+endif()
+if(NOT TARGET libfdt::libfdt)
+    add_library(libfdt::libfdt UNKNOWN IMPORTED)
+    set_target_properties(libfdt::libfdt PROPERTIES
+        IMPORTED_LOCATION "${LIBFDT_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${LIBFDT_INCLUDE_DIR}"
+    )
+endif()
+mark_as_advanced(LIBFDT_INCLUDE_DIR LIBFDT_LIBRARY)
 
 # CPM packages (fetched from source)
 gs_addexpackage("gh:google/googletest#v1.15.2")
@@ -268,6 +286,7 @@ set(systemc_srcs
     systemc-components/common/src/memory_services.cc
     systemc-components/common/src/module_factory_container.cc
     systemc-components/common/src/zip_loader.cc
+    systemc-components/common/src/dtb_loader.cc
     systemc-components/common/src/reg_model_maker.cc
     systemc-components/common/src/libgssync/pre_suspending_sc_support.cc
     systemc-components/common/src/libgssync/qk_factory.cc
@@ -415,6 +434,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         PkgConfig::LIBELF
         Threads::Threads
         PkgConfig::LIBZIP
+        libfdt::libfdt
         PkgConfig::GLIB
         ${PYBIND11_EMBED}
         ${CMAKE_DL_LIBS}

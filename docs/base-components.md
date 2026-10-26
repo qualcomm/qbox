@@ -54,6 +54,23 @@ following load types:
 - Options: `address` (absolute) or `offset` (relative)
 - Function: `void str_load(std::string data, uint64_t addr)`
 
+### Device Tree (base DTB + overlays)
+
+- CCI parameter: `dtb`
+- Sub-parameters: `base` (base DTB file, required),
+  `overlays` (ordered list of DTBO files, optional),
+  `dump` (file receiving the final DTB, optional)
+- Options: `address` (absolute) or `offset` (relative)
+- Each overlay is applied to the result of the previous one
+  with libfdt `fdt_overlay_apply` (the same operation as
+  `fdtoverlay`); the result is packed, checked with
+  `fdt_check_full`, and loaded at the given address.
+- Overlays that reference labels need a base DTB compiled with
+  symbols (`dtc -@`). Overlay sources are compiled with
+  `dtc -@ -I dts -O dtb`.
+- QBox links libfdt (`libfdt-dev` on Ubuntu, `dtc` on Homebrew/MSYS2).
+- Function: `void dtb_load(const std::string& param, uint64_t addr)`
+
 ### Data Array (32-bit data)
 
 - CCI parameter: `data`
@@ -71,7 +88,9 @@ following load types:
 ```lua
 loader = {
     {elf_file = "my_elf.elf"},
-    {data = {0x1, 0x2}, address = 0x30}
+    {data = {0x1, 0x2}, address = 0x30},
+    {dtb = {base = "board.dtb", overlays = {"overlay_a.dtbo", "overlay_b.dtbo"}},
+     address = 0xAFD00000},
 }
 ```
 
