@@ -49,6 +49,11 @@ set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries" FORCE)
 
+if(APPLE)
+    set(Python3_FIND_FRAMEWORK NEVER)
+    set(Python3_FIND_STRATEGY LOCATION)
+endif()
+
 # Dependencies URLs, overwriting locked git URLs / tags
 set(LIBQEMU_GIT "" CACHE STRING "Override locked libqemu git URL")
 set(LIBQEMU_TAG "" CACHE STRING "Override locked libqemu git tag")
