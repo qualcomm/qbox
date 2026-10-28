@@ -20,13 +20,15 @@ macro(install_systemc)
         set(SystemCLanguage_FOUND TRUE)
         set(SystemCLanguageLocal_FOUND TRUE)
     else()
-        gs_addexpackage(
-            NAME SystemCLanguage
-            GIT_REPOSITORY ${SYSTEMC_GIT}
-            GIT_TAG febde7a3e007ce3030cf574a4cb6fcc13d0ed820
+        if(NOT GS_ONLY)
+            qbox_add_locked_package(
+                SystemCLanguage
+                SystemCLanguage
+                SYSTEMC
             GIT_SHALLOW OFF
             OPTIONS "ENABLE_SUSPEND_ALL" "ENABLE_PHASE_CALLBACKS"
         )
+        endif()
 
         # Prevent CCI attempting to re-find SystemC
         if(SystemCLanguage_ADDED)
@@ -58,12 +60,14 @@ macro(install_systemc_dependencies)
         OPTIONS "SYSTEMCCCI_BUILD_TESTS OFF"
     )
 
-    gs_addexpackage(
-        NAME SCP
-        GIT_REPOSITORY ${SCP_GIT}
-        GIT_TAG 6830c915bb691d9b505b17ac631f1ff305fe9c17
+    if(NOT GS_ONLY)
+        qbox_add_locked_package(
+            SCP
+            SCP
+            SCP
         GIT_SHALLOW OFF
     )
+    endif()
 endmacro()
 
 macro(configure_systemc)
