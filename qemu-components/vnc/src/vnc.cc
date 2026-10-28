@@ -97,13 +97,9 @@ void vnc::initialize()
 
     build_qemu_options();
 
-    SCP_INFO(())("VNC Configuration on display: {}, device id: {} and user param: {}", p_gpu_output.get_value(),
-                 m_gpu_device_id, p_params.get_value());
-
-#if defined(__linux__)
-    // Set display to egl-headless when using VNC on Linux with OpenGL support
-    m_gpu->get_qemu_inst().set_display_arg("egl-headless");
-#endif
+    SCP_INFO(())
+    ("VNC Configuration on display: {}, device id: {} and user param: {}", p_gpu_output.get_value(), m_gpu_device_id,
+     p_params.get_value());
 
     m_gpu->get_qemu_inst().set_vnc_args(m_qemu_opts);
 }

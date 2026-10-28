@@ -98,9 +98,16 @@ The QEMU instance provides these default arguments:
 -serial null     (no serial backend)
 ```
 
-If no component has set a display argument, QBox also adds
-`-display none`. These defaults are set by
+Defaults values are set by
 [`QemuInstance`](../qemu-components/common/include/qemu-instance.h).
+
+Custom display parameters can be provided with the `display` CCI
+parameter. Setting it will issue `-display <value>`, while keeping
+it empty will issue `-display none` instead:
+
+```lua
+["platform.qemu_inst.display"] = "egl-headless"
+```
 
 Additional arguments can be appended via the `qemu_args` CCI
 parameter on the instance:
