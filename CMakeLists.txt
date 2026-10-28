@@ -41,8 +41,6 @@ endif()
 
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to build all targets.")
 set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "The with CMAKE_CXX_STANDARD selected C++ standard is a requirement.")
-set(GIT_BRANCH "main" CACHE STRING "Git branch from which to clone all gs repositoies")
-set(PKG_LOCK "package-lock.cmake" CACHE STRING "Package lock which will be used by the user")
 set(QEMU_PATH_NAME "" CACHE STRING "The name of the path of qemu in the git directory")
 
 set(CMAKE_FIND_USE_PACKAGE_REGISTRY FALSE)
@@ -51,11 +49,15 @@ set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries" FORCE)
 
-# Dependencies URLs
-set(LIBQEMU_GIT "https://github.com/qualcomm/qemu.git" CACHE STRING "libqemu  git url")
-set(SYSTEMC_GIT "https://github.com/accellera-official/systemc.git" CACHE STRING "SystemC git url")
+# Dependencies URLs, overwriting locked git URLs / tags
+set(LIBQEMU_GIT "" CACHE STRING "Override locked libqemu git URL")
+set(LIBQEMU_TAG "" CACHE STRING "Override locked libqemu git tag")
+set(SYSTEMC_GIT "" CACHE STRING "Override locked SystemC git URL")
+set(SYSTEMC_TAG "" CACHE STRING "Override locked SystemC git tag")
+set(SCP_GIT     "" CACHE STRING "Override locked SCP git repository URL")
+set(SCP_TAG     "" CACHE STRING "Override locked SCP git tag")
+
 set(CCI_GIT "https://github.com/accellera-official/cci.git" CACHE STRING "SystemC Configuration, Control and Inspection (CCI) Library git url")
-set(SCP_GIT "https://github.com/accellera-official/systemc-common-practices.git" CACHE STRING "SystemC Common Practices (SCP) git url")
 
 # Generate a compile_commands.json file for our build,
 # for use by clang_complete, YouCompleteMe, vscode, etc.
@@ -95,7 +97,57 @@ add_library(qbox-common INTERFACE)
 
 # Allow using package-lock.cmake files in projects using this boilerplate to
 # pin repos, etc.
-CPMUsePackageLock(${PKG_LOCK})
+CPMUsePackageLock("${CMAKE_CURRENT_SOURCE_DIR}/package-lock.cmake")
+
+if(DEFINED SYSTEMC_REPO AND NOT "${SYSTEMC_REPO}" STREQUAL "")
+    set(SYSTEMC_GIT "${SYSTEMC_REPO}")
+endif()
+
+# use a locked git url / tag if not explicitly overwritten
+function(qbox_add_locked_package declaration_name package_name lock_prefix)
+    set(_locked_git_var "LOCK_${lock_prefix}_GIT")
+    set(_locked_tag_var "LOCK_${lock_prefix}_TAG")
+
+    if(NOT DEFINED ${_locked_git_var} OR NOT DEFINED ${_locked_tag_var})
+        message(FATAL_ERROR
+            "qbox package-lock.cmake must define ${_locked_git_var} and ${_locked_tag_var}")
+    endif()
+
+    set(_repository "${${_locked_git_var}}")
+    set(_tag "${${_locked_tag_var}}")
+    set(_overridden FALSE)
+
+    set(_git_override_var "${lock_prefix}_GIT")
+    if(DEFINED ${_git_override_var} AND NOT "${${_git_override_var}}" STREQUAL "")
+        set(_repository "${${_git_override_var}}")
+        set(_overridden TRUE)
+    endif()
+
+    set(_tag_override_var "${lock_prefix}_TAG")
+    if(DEFINED ${_tag_override_var} AND NOT "${${_tag_override_var}}" STREQUAL "")
+        set(_tag "${${_tag_override_var}}")
+        set(_overridden TRUE)
+    endif()
+
+    set(_source_override_var "CPM_${package_name}_SOURCE")
+    if(DEFINED ${_source_override_var}
+       AND NOT "${${_source_override_var}}" STREQUAL "")
+        CPMAddPackage(NAME "${package_name}")
+        return()
+    endif()
+
+    if(_overridden)
+        CPMAddPackage(
+            NAME "${package_name}"
+            GIT_REPOSITORY "${_repository}"
+            GIT_TAG "${_tag}"
+            ${ARGN}
+            FORCE True
+        )
+    else()
+        CPMAddPackage(NAME "${declaration_name}")
+    endif()
+endfunction()
 
 # ##############################################
 if(PROJECT_SOURCE_DIR STREQUAL PROJECT_BINARY_DIR)
@@ -347,10 +399,10 @@ if (NOT WITHOUT_QEMU)
     # This is a hack to workaround a CMake issue. We specify an existing file
     # which is _not_ a submodule so that FetchContent does not init any
     # submodule. See https://gitlab.kitware.com/cmake/cmake/-/issues/20579
-    CPMAddPackage(
-        NAME qemu
-        GIT_REPOSITORY "${LIBQEMU_GIT}"
-        GIT_TAG "${GIT_BRANCH}"
+    qbox_add_locked_package(
+        qemu
+        libqemu
+        LIBQEMU
         GIT_SHALLOW TRUE
         GIT_SUBMODULES "CMakeLists.txt"
     )
