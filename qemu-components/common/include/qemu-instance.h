@@ -36,6 +36,7 @@ class QemuDeviceBaseIF
 {
 public:
     virtual bool can_run() { return true; }
+    virtual void start_coroutine() {}
     SCP_LOGGER();
 };
 
@@ -94,6 +95,8 @@ private:
     cci::cci_broker_handle m_conf_broker;
 
     bool m_running = false;
+    bool m_coroutine_runner_claimed = false;
+    gs::async_event m_coroutine_kick_ev;
     SCP_LOGGER();
 
 public:
@@ -110,6 +113,7 @@ public:
         std::lock_guard<std::mutex> lock(m_lock);
         devices.push_back(d);
     }
+
     void del_dev(QemuDeviceBaseIF* d)
     {
         if (m_running) {
@@ -117,6 +121,23 @@ public:
             devices.remove(d);
         }
     }
+
+    bool claim_coroutine_runner()
+    {
+        std::lock_guard<std::mutex> lock(m_lock);
+
+        if (m_coroutine_runner_claimed) {
+            return false;
+        }
+        m_coroutine_runner_claimed = true;
+
+        return true;
+    }
+
+    void notify_coroutine_runner() { m_coroutine_kick_ev.async_notify(); }
+
+    gs::async_event& coroutine_runner_event() { return m_coroutine_kick_ev; }
+
     bool can_run()
     {
         if (!m_running) return false;
@@ -321,6 +342,7 @@ public:
         , m_conf_broker(cci::cci_get_broker())
         , m_inst(loader, t)
         , m_dmi_mgr(m_inst)
+        , m_coroutine_kick_ev(false)
         , reset("reset")
         , p_tcg_mode("tcg_mode", "MULTI", "The TCG mode required, SINGLE, COROUTINE or MULTI")
         , p_sync_policy("sync_policy", "multithread-quantum", "Synchronization Policy to use")
@@ -647,7 +669,18 @@ private:
             init(); // dlsyms libqemu_init; plugin functions are part of the returned LibQemuExports table.
         }
     }
-    void start_of_simulation(void) override { get().finish_qemu_init(); }
+    void start_of_simulation(void) override
+    {
+        if (m_tcg_mode == TCG_COROUTINE) {
+            std::lock_guard<std::mutex> lock(m_lock);
+            qemu::IothreadLockGuard iothread_lock(get());
+            for (auto* device : devices) {
+                device->start_coroutine();
+            }
+        }
+
+        get().finish_qemu_init();
+    }
 
     void reset_cb(const bool val)
     {
