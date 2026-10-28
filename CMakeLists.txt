@@ -363,6 +363,7 @@ if (NOT WITHOUT_QEMU)
             qemu-components/common/src/libqemu-cxx/libqemu-plugin.cc
             qemu-components/common/src/libqemu-cxx/memory.cc
             qemu-components/common/src/libqemu-cxx/object.cc
+            qemu-components/common/src/libqemu-cxx/pci.cc
             qemu-components/common/src/libqemu-cxx/rcu-read-lock.cc
             qemu-components/common/src/libqemu-cxx/sysbus.cc
             qemu-components/common/src/libqemu-cxx/target-info.cc

@@ -800,4 +800,17 @@ public:
     Clock(const Object& o): Object(o) {}
 };
 
+class PciDevice : public Device
+{
+public:
+    static constexpr const char* const TYPE = "pci-device";
+
+    PciDevice() = default;
+    PciDevice(const PciDevice&) = default;
+    PciDevice(const Object& object): Device(object) {}
+
+    bool msi_notify(unsigned vector);
+    bool msix_notify(unsigned vector);
+};
+
 }; /* namespace qemu */
