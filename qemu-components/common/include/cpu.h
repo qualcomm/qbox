@@ -150,6 +150,7 @@ protected:
     gs::runonsysc m_on_sysc;
     std::shared_ptr<qemu::Timer> m_deadline_timer;
     bool m_coroutines;
+    bool m_coroutine_runner = false;
 
     qemu::Cpu m_cpu;
     std::string m_cpu_type;
@@ -299,6 +300,15 @@ protected:
         }
     }
 
+    void notify_execution_thread()
+    {
+        if (m_coroutines) {
+            m_inst.notify_coroutine_runner();
+        } else {
+            m_qemu_kick_ev.async_notify();
+        }
+    }
+
     /*
      * Called when the CPU is kicked. We notify the corresponding async event
      * to wake the CPU up if it was sleeping waiting for work.
@@ -307,7 +317,7 @@ protected:
     {
         SCP_TRACE(())("QEMU deadline KICK callback");
         if (m_coroutines) {
-            if (!m_finished) m_qemu_kick_ev.async_notify();
+            if (!m_finished) notify_execution_thread();
         } else {
             set_signaled();
         }
@@ -393,7 +403,7 @@ protected:
          */
 
         SCP_TRACE(())("Prepare run");
-        if (m_inst.get_tcg_mode() == QemuInstance::TCG_SINGLE) {
+        if (m_inst.get_tcg_mode() == QemuInstance::TCG_SINGLE || m_coroutines) {
             while (!m_inst.can_run() && !m_finished) {
                 wait_for_work();
             }
@@ -444,11 +454,11 @@ protected:
     /*
      * Called after a CPU loop run. It synchronizes with the kernel.
      */
-    void sync_with_kernel()
+    void sync_with_kernel(bool soft_stop = true)
     {
         int64_t now = m_inst.get().get_virtual_clock();
 
-        m_cpu.set_soft_stopped(true);
+        if (soft_stop) m_cpu.set_soft_stopped(true);
 
         m_inst.get().unlock_iothread();
         if (m_finished) return;
@@ -498,7 +508,7 @@ protected:
         for (; !m_finished;) {
             prepare_run_cpu();
             run_cpu_loop();
-            sync_with_kernel();
+            sync_with_kernel(!m_coroutine_runner);
         }
     }
 
@@ -625,6 +635,19 @@ public:
      */
     bool can_run() override { return m_cpu.can_run(); }
 
+    void start_coroutine() override
+    {
+        // if (!m_coroutines) return;
+        assert(m_coroutines);
+
+        m_quantum_ns = int64_t(tlm_utils::tlm_quantumkeeper::get_global_quantum().to_seconds() * 1e9);
+        m_started = true;
+        if (m_resetting.load() == ResetState::none) {
+            m_cpu.set_soft_stopped(false);
+        }
+        m_cpu.set_vcpu_dirty(true);
+    }
+
     void retrieve_qemu_cpu()
     {
         if (m_cpu_type.empty()) {
@@ -726,9 +749,12 @@ public:
 
     virtual void start_of_simulation() override
     {
-        m_quantum_ns = int64_t(tlm_utils::tlm_quantumkeeper::get_global_quantum().to_seconds() * 1e9);
-
         QemuDevice::start_of_simulation();
+        if (m_coroutines) {
+            return;
+        }
+
+        m_quantum_ns = int64_t(tlm_utils::tlm_quantumkeeper::get_global_quantum().to_seconds() * 1e9);
         if (m_inst.get_tcg_mode() == QemuInstance::TCG_SINGLE) {
             if (m_inst.can_run()) {
                 m_time_sync->on_qk_start();
@@ -746,7 +772,7 @@ public:
         }
 
         m_started = true;
-        if (!m_coroutines) {
+        if (m_resetting.load() == ResetState::none) {
             /*
              * Start the quantum keeper before kicking the CPU to ensure
              * its tick event is attached as suspending. Without this, a
@@ -828,11 +854,10 @@ public:
 
 inline void QemuCpu::QuantumKeeperSync::on_construct()
 {
-    m_qemu_cpu.m_external_ev |= m_qemu_cpu.m_qemu_kick_ev;
-
     m_qemu_cpu.create_quantum_keeper();
     m_qemu_cpu.set_coroutine_mode();
     if (!m_qemu_cpu.m_coroutines) {
+        m_qemu_cpu.m_external_ev |= m_qemu_cpu.m_qemu_kick_ev;
         sc_core::sc_spawn(std::bind(&QemuCpu::watch_external_ev, &m_qemu_cpu), "watch_external_ev");
     }
 }
@@ -840,7 +865,17 @@ inline void QemuCpu::QuantumKeeperSync::on_construct()
 inline void QemuCpu::QuantumKeeperSync::on_after_cpu_created()
 {
     if (m_qemu_cpu.m_coroutines) {
-        m_qemu_cpu.m_sc_thread = sc_core::sc_spawn(std::bind(&QemuCpu::mainloop_thread_coroutine, &m_qemu_cpu));
+        m_qemu_cpu.m_coroutine_runner = m_qemu_cpu.m_inst.claim_coroutine_runner();
+
+        if (m_qemu_cpu.m_coroutine_runner) {
+            /*
+             * only create one SystemC process per QemuCpu.
+             * it will handle SystemC stuff and manager the
+             * shared QEMU coroutine
+             */
+            m_qemu_cpu.m_external_ev |= m_qemu_cpu.m_inst.coroutine_runner_event();
+            m_qemu_cpu.m_sc_thread = sc_core::sc_spawn(std::bind(&QemuCpu::mainloop_thread_coroutine, &m_qemu_cpu));
+        }
     }
 }
 
@@ -878,23 +913,16 @@ inline void QemuCpu::QuantumKeeperSync::on_halt_pre(bool val)
     }
 }
 
-inline void QemuCpu::QuantumKeeperSync::on_halt_post()
-{
-    m_qemu_cpu.m_qemu_kick_ev.async_notify(); // notify the other thread so that the CPU is allowed to continue
-}
+inline void QemuCpu::QuantumKeeperSync::on_halt_post() { m_qemu_cpu.notify_execution_thread(); }
 
 inline void QemuCpu::QuantumKeeperSync::on_reset_finish()
 {
     m_qemu_cpu.m_qk->start(); // restart the QK if it's stopped
     m_qemu_cpu.m_qk->reset();
-    m_qemu_cpu.m_qemu_kick_ev.async_notify(); // notify the other thread so that the CPU is allowed to continue
+    m_qemu_cpu.notify_execution_thread();
 }
 
-inline void QemuCpu::QuantumKeeperSync::on_kick_notify()
-{
-    m_qemu_cpu.m_qemu_kick_ev
-        .async_notify(); // notify the other thread so that the CPU is allowed to process if required
-}
+inline void QemuCpu::QuantumKeeperSync::on_kick_notify() { m_qemu_cpu.notify_execution_thread(); }
 
 inline void QemuCpu::QuantumKeeperSync::on_qk_start() { m_qemu_cpu.m_qk->start(); }
 
