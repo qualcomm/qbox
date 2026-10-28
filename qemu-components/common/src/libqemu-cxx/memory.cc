@@ -252,13 +252,13 @@ void IOMMUMemoryRegion::init(const Object& owner, const char* name, uint64_t siz
                              IOMMUTranslateCallbackFn cb, IOMMUAttrsToIndexCallbackFn attrs_to_index_cb,
                              IOMMUNumIndexesCallbackFn num_indexes_cb, IOMMUIndexToAttrsCallbackFn index_to_attrs_cb)
 {
+    QemuIOMMUMemoryRegion* mr = reinterpret_cast<QemuIOMMUMemoryRegion*>(m_obj);
+    m_int->exports().iommu_memory_region_init(mr, owner.get_qemu_obj(), name, size);
+
     m_root_io.init_io(*this, "IOMMU untranslated root", std::numeric_limits<uint64_t>::max(), ops);
     m_as_io->init(m_root_io, "IOMMU untranslated AddressSpace");
 
-    QemuIOMMUMemoryRegion* mr = reinterpret_cast<QemuIOMMUMemoryRegion*>(m_obj);
     typedef std::function<int(uint64_t, uint64_t*, unsigned int, MemTxAttrs)> LibQemuIOMMUTranslateCallBack;
-
-    m_int->exports().iommu_memory_region_init(mr, owner.get_qemu_obj(), name, size);
 
     m_int->get_iommu_translate_cb().register_cb(*this, cb);
     if (attrs_to_index_cb) {
