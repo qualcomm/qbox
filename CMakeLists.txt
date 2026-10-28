@@ -236,28 +236,25 @@ gs_addexpackage("gh:google/googletest#v1.15.2")
 gs_addexpackage("gh:lua/lua#v5.4.2")
 
 find_package(Git QUIET)
-if(Git_FOUND)
-    set(PATCH_EXEC_CMD ${GIT_EXECUTABLE})
-    set(PATCH_ARGS -c "user.name=qqvp_ci" -c "user.email=qqvp_ci@qualcomm.com" am)
-else()
+if(NOT Git_FOUND)
     message(FATAL_ERROR "Couldn't find git executable for rpclib patching")
 endif()
 
-
-FILE(GLOB RPCLIB_PATCH_FILES "${CMAKE_CURRENT_SOURCE_DIR}/patch/rpclib/*.patch")
+set(RPCLIB_PATCH_SCRIPT
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply-git-am-patches.cmake"
+)
 
 gs_addexpackage(
     NAME rpclib
-    GIT_REPOSITORY
-    https://github.com/rpclib/rpclib.git
-    GIT_TAG
-    v2.3.0
-    GIT_SHALLOW
-    TRUE
+    GIT_REPOSITORY https://github.com/rpclib/rpclib.git
+    GIT_TAG v2.3.0
+    GIT_SHALLOW TRUE
     PATCH_COMMAND
-    ${PATCH_EXEC_CMD} ${PATCH_ARGS} "${RPCLIB_PATCH_FILES}"
-    UPDATE_DISCONNECTED
-    1
+        "${CMAKE_COMMAND}"
+        "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
+        "-DPATCH_DIR=${CMAKE_CURRENT_SOURCE_DIR}/patch/rpclib"
+        -P "${RPCLIB_PATCH_SCRIPT}"
+    UPDATE_DISCONNECTED 1
 )
 
 gs_systemc()
