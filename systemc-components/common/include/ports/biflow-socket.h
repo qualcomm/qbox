@@ -160,6 +160,8 @@ public:
         m_bound = true;
     }
 
+    bool is_bound() const { return m_bound; }
+
     const char* name() { return sc_module::name(); }
 
     tlm_utils::simple_target_socket<MODULE, DEFAULT_TLM_BUSWIDTH> input_socket;
