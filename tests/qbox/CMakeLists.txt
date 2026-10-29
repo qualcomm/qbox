@@ -304,8 +304,8 @@ function(qbox_add_cpu_test target timeout_s)
                                                  -p test-bench.num_cpu=${num_cpu}
                                                  -p test-bench.inst_a.icount=${icount}
                                                  -p test-bench.inst_b.icount=${icount}
-                                                 $<$<STREQUAL:${icount},true>:-p test-bench.inst_a.icount_mips_shift=3>
-                                                 $<$<STREQUAL:${icount},true>:-p test-bench.inst_b.icount_mips_shift=3>
+                                                 "$<$<STREQUAL:${icount},true>:-p;test-bench.inst_a.icount_mips_shift=3>"
+                                                 "$<$<STREQUAL:${icount},true>:-p;test-bench.inst_b.icount_mips_shift=3>"
                                                  -p test-bench.inst_a.tcg_mode=${threading}
                                                  -p test-bench.inst_b.tcg_mode=${threading}
 
@@ -316,6 +316,7 @@ function(qbox_add_cpu_test target timeout_s)
                                                  -p test-bench.bulkmem.min_block_size=32
 
                                                  -p log_level=0
+                COMMAND_EXPAND_LISTS
                                                  )
             set_tests_properties(${test_name} PROPERTIES TIMEOUT ${timeout_s})
             if (GS_ENABLE_SANITIZERS)
