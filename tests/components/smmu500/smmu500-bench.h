@@ -108,11 +108,26 @@ public:
 class smmu500_security_observing_memory : public gs::gs_memory<>
 {
 public:
+    enum class dmi_mode { allow, refuse, write_only, short_seven_bytes };
+
     std::vector<std::optional<bool>> security_states;
+    std::vector<std::optional<bool>> dmi_security_states;
+    unsigned int dma_transport_count = 0;
+    unsigned int dmi_query_count = 0;
+    dmi_mode dma_dmi_mode = dmi_mode::allow;
+    bool invalidate_dmi_during_query = false;
 
     smmu500_security_observing_memory(const sc_core::sc_module_name& n): gs::gs_memory<>(n) {}
 
     void clear_security_states() { security_states.clear(); }
+    void reset_dma_observations()
+    {
+        dma_transport_count = 0;
+        dmi_query_count = 0;
+        dmi_security_states.clear();
+    }
+
+    void invalidate_memory_dmi(uint64_t start, uint64_t end) { socket[1]->invalidate_direct_mem_ptr(start, end); }
 
 protected:
     void b_transport(int id, tlm::tlm_generic_payload& txn, sc_core::sc_time& delay) override
@@ -123,6 +138,37 @@ protected:
             security_states.emplace_back(std::nullopt);
         }
         gs::gs_memory<>::b_transport(id, txn, delay);
+        if (txn.get_command() == tlm::TLM_READ_COMMAND && txn.get_data_length() == sizeof(uint64_t) &&
+            txn.get_extension<gs::QemuMemTxSecureTlmExtension>()) {
+            ++dma_transport_count;
+        }
+    }
+
+    bool get_direct_mem_ptr(int id, tlm::tlm_generic_payload& txn, tlm::tlm_dmi& dmi) override
+    {
+        const auto* security = txn.get_extension<gs::QemuMemTxSecureTlmExtension>();
+        if (!security) return gs::gs_memory<>::get_direct_mem_ptr(id, txn, dmi);
+
+        ++dmi_query_count;
+        dmi_security_states.emplace_back(security->value);
+        if (dma_dmi_mode == dmi_mode::refuse) return false;
+
+        if (!gs::gs_memory<>::get_direct_mem_ptr(id, txn, dmi)) return false;
+        if (dma_dmi_mode == dmi_mode::write_only) {
+            dmi.allow_write();
+        } else if (dma_dmi_mode == dmi_mode::short_seven_bytes) {
+            const uint64_t original_start = dmi.get_start_address();
+            const uint64_t request_address = txn.get_address();
+            dmi.set_dmi_ptr(dmi.get_dmi_ptr() + (request_address - original_start));
+            dmi.set_start_address(request_address);
+            dmi.set_end_address(request_address + 6);
+        }
+
+        if (invalidate_dmi_during_query) {
+            invalidate_dmi_during_query = false;
+            socket[id]->invalidate_direct_mem_ptr(0, UINT64_MAX);
+        }
+        return true;
     }
 };
 
@@ -195,10 +241,7 @@ protected:
         smmu.SMMU_S2CR[0][smmu.S2CR_TYPE] = type;
     }
 
-    void configure_identity_context()
-    {
-        configure_identity_context(0);
-    }
+    void configure_identity_context() { configure_identity_context(0); }
 
     void configure_identity_context(unsigned int cb)
     {
@@ -219,8 +262,8 @@ protected:
 
         write_memory64(0x4000, 0x5000 | 0x3);
         write_memory64(0x5000, 0x6000 | 0x3);
-        write_memory64(0x6008, page_pa | 0x3 | (1ULL << 6) | (access_flag ? (1ULL << 10) : 0) |
-                                      (read_only ? (1ULL << 7) : 0));
+        write_memory64(0x6008,
+                       page_pa | 0x3 | (1ULL << 6) | (access_flag ? (1ULL << 10) : 0) | (read_only ? (1ULL << 7) : 0));
     }
 
     void configure_stage2_page_table(uint64_t page_pa)
@@ -478,6 +521,24 @@ protected:
         return txn.get_response_status();
     }
 
+    tlm::tlm_response_status tbu_read32_with_security(uint64_t address, uint32_t& value, bool secure)
+    {
+        tlm::tlm_generic_payload txn;
+        gs::QemuMemTxSecureTlmExtension security;
+        txn.set_command(tlm::TLM_READ_COMMAND);
+        txn.set_address(address);
+        txn.set_data_ptr(reinterpret_cast<unsigned char*>(&value));
+        txn.set_data_length(sizeof(value));
+        txn.set_streaming_width(sizeof(value));
+        txn.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+        security.value = secure;
+        txn.set_extension(&security);
+        sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+        tbu_initiator->b_transport(txn, delay);
+        txn.clear_extension(&security);
+        return txn.get_response_status();
+    }
+
     unsigned int tbu_debug_write32(uint64_t address, uint32_t value)
     {
         tlm::tlm_generic_payload txn;
@@ -540,9 +601,7 @@ class smmu500_irq_test_bench : public smmu500_test_bench
 protected:
     smmu500_irq_probe irq;
 
-    smmu500_irq_test_bench(const sc_core::sc_module_name& n)
-        : smmu500_test_bench(n)
-        , irq("irq")
+    smmu500_irq_test_bench(const sc_core::sc_module_name& n): smmu500_test_bench(n), irq("irq")
     {
         smmu.irq_global.bind(irq.input);
     }
@@ -555,9 +614,7 @@ protected:
     tlm_utils::simple_initiator_socket<smmu500_multi_tbu_test_bench> tbu_second_initiator;
 
     smmu500_multi_tbu_test_bench(const sc_core::sc_module_name& n)
-        : smmu500_test_bench(n, 2, 2, 48)
-        , tbu_second("tbu_second", &smmu)
-        , tbu_second_initiator("tbu_second_initiator")
+        : smmu500_test_bench(n, 2, 2, 48), tbu_second("tbu_second", &smmu), tbu_second_initiator("tbu_second_initiator")
     {
         tbu_second_initiator.bind(tbu_second.upstream_socket);
         tbu_second.downstream_socket.bind(memory.socket);
@@ -593,9 +650,7 @@ class smmu500_context_irq_test_bench : public smmu500_test_bench
 protected:
     smmu500_irq_probe irq;
 
-    smmu500_context_irq_test_bench(const sc_core::sc_module_name& n)
-        : smmu500_test_bench(n)
-        , irq("irq")
+    smmu500_context_irq_test_bench(const sc_core::sc_module_name& n): smmu500_test_bench(n), irq("irq")
     {
         smmu.irq_context[0].bind(irq.input);
     }

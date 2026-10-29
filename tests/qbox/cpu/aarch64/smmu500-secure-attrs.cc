@@ -7,8 +7,10 @@
 #include <systemc>
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <fstream>
+#include <thread>
 #include <vector>
 
 #include <cci/utils/broker.h>
@@ -17,6 +19,7 @@
 #include <router.h>
 #include <smmu500.h>
 #include <tlm_utils/simple_target_socket.h>
+#include <tlm-extensions/qemu-instance-hint.h>
 #include <tlm-extensions/qemu-memtx-attrs.h>
 
 #include "cortex-a53.h"
@@ -52,8 +55,15 @@ public:
     std::vector<bool> data_write_security;
     std::vector<bool> data_dmi_security;
     std::vector<bool> page_table_security;
+    const std::thread::id captured_thread_id;
+    std::atomic<unsigned> dma_ptw_transport_count{ 0 };
+    std::atomic<unsigned> dma_ptw_dmi_query_count{ 0 };
+    std::atomic<unsigned> dma_ptw_off_systemc_count{ 0 };
 
-    security_observing_memory(const sc_core::sc_module_name& name, uint64_t size): gs::gs_memory<>(name, size) {}
+    security_observing_memory(const sc_core::sc_module_name& name, uint64_t size)
+        : gs::gs_memory<>(name, size), captured_thread_id(std::this_thread::get_id())
+    {
+    }
 
     uint64_t read_u64(uint64_t address)
     {
@@ -81,8 +91,19 @@ protected:
         return secure->value;
     }
 
+    static bool is_dma_ptw_payload(const tlm::tlm_generic_payload& txn)
+    {
+        return txn.get_command() == tlm::TLM_READ_COMMAND && txn.get_data_length() == sizeof(uint64_t) &&
+               txn.get_extension<gs::QemuMemTxSecureTlmExtension>() != nullptr &&
+               is_page_table_address(txn.get_address()) && txn.get_extension<QemuInstanceHintTlmExtension>() == nullptr;
+    }
+
     void b_transport(int id, tlm::tlm_generic_payload& txn, sc_core::sc_time& delay) override
     {
+        if (is_dma_ptw_payload(txn)) {
+            ++dma_ptw_transport_count;
+            if (std::this_thread::get_id() != captured_thread_id) ++dma_ptw_off_systemc_count;
+        }
         if (txn.get_command() == tlm::TLM_WRITE_COMMAND && is_data_address(txn.get_address())) {
             data_write_security.push_back(transaction_is_secure(txn));
         }
@@ -94,11 +115,23 @@ protected:
 
     bool get_direct_mem_ptr(int id, tlm::tlm_generic_payload& txn, tlm::tlm_dmi& dmi) override
     {
+        if (is_dma_ptw_payload(txn)) {
+            ++dma_ptw_dmi_query_count;
+            if (std::this_thread::get_id() != captured_thread_id) ++dma_ptw_off_systemc_count;
+        }
         if (is_data_address(txn.get_address())) {
             data_dmi_security.push_back(transaction_is_secure(txn));
         }
         return gs::gs_memory<>::get_direct_mem_ptr(id, txn, dmi);
     }
+};
+
+class test_tbu : public gs::smmu500_tbu<>
+{
+public:
+    using gs::smmu500_tbu<>::smmu500_tbu;
+    using gs::smmu500_tbu<>::b_transport;
+    using gs::smmu500_tbu<>::get_direct_mem_ptr;
 };
 
 class completion_target : public sc_core::sc_module
@@ -138,7 +171,7 @@ class CpuArmCortexA53SMMU500SecureAttrsTest : public TestBench
     gs::router<> m_router;
     security_observing_memory m_memory;
     gs::smmu500<> m_smmu;
-    gs::smmu500_tbu<> m_tbu;
+    test_tbu m_tbu;
     gs::async_event m_completion_guard;
     sc_core::sc_event m_completion_event;
     completion_target m_completion_target;
@@ -152,14 +185,14 @@ public:
         , m_router("router")
         , m_memory("memory", FIRMWARE_SIZE)
         , m_smmu("smmu")
-        , m_tbu("tbu", &m_smmu)
+        , m_tbu("tbu", &m_smmu, m_instance)
         , m_completion_guard("completion_guard")
         , m_completion_target("completion_target", m_completion_event)
     {
         TEST_ASSERT(p_num_cpu == 1);
 
         m_completion_guard.async_attach_suspending();
-        SC_METHOD(finish_test);
+        SC_THREAD(finish_test);
         sensitive << m_completion_event;
         dont_initialize();
 
@@ -190,10 +223,10 @@ public:
         m_tbu.downstream_socket.bind(m_memory.socket);
         m_smmu.dma_socket.bind(m_memory.socket);
 
-        load_firmware_binary(FIRMWARE_BIN_PATH, FIRMWARE_ADDR,
-                             { SECURE_IOVA, NON_SECURE_IOVA, SECURE_PRIME_VALUE, SECURE_WRITE_VALUE,
-                               NON_SECURE_PRIME_VALUE, NON_SECURE_WRITE_VALUE, COMPLETE_ADDR, COMPLETE_VALUE,
-                               WRONG_EXCEPTION_LEVEL_VALUE });
+        load_firmware_binary(
+            FIRMWARE_BIN_PATH, FIRMWARE_ADDR,
+            { SECURE_IOVA, NON_SECURE_IOVA, SECURE_PRIME_VALUE, SECURE_WRITE_VALUE, NON_SECURE_PRIME_VALUE,
+              NON_SECURE_WRITE_VALUE, COMPLETE_ADDR, COMPLETE_VALUE, WRONG_EXCEPTION_LEVEL_VALUE });
     }
 
     void end_of_elaboration() override
@@ -210,9 +243,11 @@ public:
     {
         TEST_ASSERT(m_completion_target.writes == 1);
         TEST_ASSERT(m_completion_target.value == COMPLETE_VALUE);
-        TEST_ASSERT(m_memory.data_write_security.size() == 2);
+        TEST_ASSERT(m_memory.data_write_security.size() == 4);
         TEST_ASSERT(m_memory.data_write_security[0]);
-        TEST_ASSERT(!m_memory.data_write_security[1]);
+        TEST_ASSERT(m_memory.data_write_security[1]);
+        TEST_ASSERT(!m_memory.data_write_security[2]);
+        TEST_ASSERT(!m_memory.data_write_security[3]);
         TEST_ASSERT(std::find(m_memory.data_dmi_security.begin(), m_memory.data_dmi_security.end(), true) !=
                     m_memory.data_dmi_security.end());
         TEST_ASSERT(std::find(m_memory.data_dmi_security.begin(), m_memory.data_dmi_security.end(), false) !=
@@ -221,6 +256,9 @@ public:
                     m_memory.page_table_security.end());
         TEST_ASSERT(std::find(m_memory.page_table_security.begin(), m_memory.page_table_security.end(), false) !=
                     m_memory.page_table_security.end());
+        TEST_ASSERT(m_memory.dma_ptw_transport_count > 0);
+        TEST_ASSERT(m_memory.dma_ptw_dmi_query_count > 0);
+        TEST_ASSERT(m_memory.dma_ptw_off_systemc_count == 0);
         TEST_ASSERT(m_memory.read_u64(SECURE_PHYS_ADDR) == SECURE_WRITE_VALUE);
         TEST_ASSERT(m_memory.read_u64(NON_SECURE_PHYS_ADDR) == NON_SECURE_WRITE_VALUE);
     }
@@ -261,6 +299,33 @@ private:
 
     void finish_test()
     {
+        tlm::tlm_generic_payload txn;
+        auto* secure = new gs::QemuMemTxSecureTlmExtension();
+        secure->value = true;
+        auto* origin = new QemuInstanceHintTlmExtension(m_instance);
+        txn.set_extension(secure);
+        txn.set_extension(origin);
+        txn.set_address(SECURE_IOVA);
+        txn.set_command(tlm::TLM_READ_COMMAND);
+        uint64_t value = 0;
+        txn.set_data_ptr(reinterpret_cast<unsigned char*>(&value));
+        txn.set_data_length(sizeof(value));
+        txn.set_streaming_width(sizeof(value));
+        txn.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+        sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+        m_tbu.b_transport(txn, delay);
+        TEST_ASSERT(txn.get_response_status() == tlm::TLM_OK_RESPONSE);
+        TEST_ASSERT(value == SECURE_WRITE_VALUE);
+
+        auto* mr_hint = txn.get_extension<QemuMrHintTlmExtension>();
+        TEST_ASSERT(mr_hint != nullptr);
+        TEST_ASSERT(mr_hint->get_mr().get_size() == IOVA_WINDOW_SIZE);
+        TEST_ASSERT(mr_hint->get_offset() == 0);
+        tlm::tlm_dmi dmi;
+        TEST_ASSERT(!m_tbu.get_direct_mem_ptr(txn, dmi));
+        TEST_ASSERT(dmi.get_start_address() == SECURE_IOVA);
+        TEST_ASSERT(dmi.get_end_address() == SECURE_IOVA + IOVA_WINDOW_SIZE - 1);
+
         m_completion_guard.async_detach_suspending();
     }
 

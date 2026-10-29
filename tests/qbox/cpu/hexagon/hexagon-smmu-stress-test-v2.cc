@@ -715,7 +715,7 @@ public:
             // High VA TBU for each CPU - unique StreamID per CPU
             char tbu_high_va_name[32];
             std::snprintf(tbu_high_va_name, sizeof(tbu_high_va_name), "tbu_high_va_%d", i);
-            m_tbus_high_va[i] = new gs::smmu500_tbu<>(tbu_high_va_name, &m_smmu);
+            m_tbus_high_va[i] = new gs::smmu500_tbu<>(tbu_high_va_name, &m_smmu, i % 2 == 0 ? m_inst_a : m_inst_b);
             uint32_t high_va_topology_id = i + 1; // StreamID 1,2,3... for high VA
             m_tbus_high_va[i]->p_topology_id = high_va_topology_id;
             m_tbus_high_va[i]->p_topology_id.set_value(high_va_topology_id);
