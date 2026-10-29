@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
 
+set -eu
+
 # Copyright (c) 2025 Qualcomm Innovation Center, Inc. All Rights Reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -21,19 +23,19 @@ if { [ -e /etc/os-release ] && OS_RELEASE="/etc/os-release"; } || \
                 libfdt-dev libglib2.0-dev libjpeg-turbo8-dev libpixman-1-dev libsdl2-dev \
                 libslirp-dev libasio-dev  libvirglrenderer-dev libzip-dev \
                 lld llvm meson ninja-build ocl-icd-opencl-dev python3 python3-dev \
-                python3-venv bison flex
+                python3-pexpect python3-venv bison flex
         elif [ "${VERSION_ID}" = "22.04" ]; then
             apt install cmake g++ gcc git libasio-dev libelf-dev libepoxy-dev \
                 libfdt-dev libglib2.0-dev libjpeg-turbo8-dev libpixman-1-dev libsdl2-dev \
                 libslirp-dev libasio-dev libvirglrenderer-dev libzip-dev \
                 lld llvm meson ninja-build ocl-icd-opencl-dev python3 python3-dev \
-                python3-tomli python3-venv bison flex
+                python3-pexpect python3-tomli python3-venv bison flex
         elif [ "${VERSION_ID}" = "20.04" ]; then
             apt install cmake g++ gcc git libasio-dev libelf-dev libepoxy-dev \
                 libfdt-dev libglib2.0-dev libjpeg-turbo8-dev libpixman-1-dev libsdl2-dev \
                 libslirp-dev libasio-dev libvirglrenderer-dev libzip-dev \
                 lld llvm meson ninja-build ocl-icd-opencl-dev python3 python3-dev \
-                python3-pip python3-venv bison flex
+                python3-pexpect python3-pip python3-venv bison flex
             pip install --user tomli
         else
             unsupported_operating_system
@@ -58,11 +60,9 @@ else
             if [ "${MAJOR_VERSION}" = "26" ]; then
                 brew install asio bison cmake dtc jpeg-turbo libelf libslirp libzip \
                     lld llvm meson ninja python3 sdl2
-                pip install --user pexpect numpy
             elif [ "${MAJOR_VERSION}" = "15" ]; then
                 brew install asio bison cmake dtc jpeg-turbo libelf libslirp libzip \
                     lld llvm meson ninja python3 sdl2
-                pip install --user pexpect numpy
             else
                 unsupported_operating_system
             fi

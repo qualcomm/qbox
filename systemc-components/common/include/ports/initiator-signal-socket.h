@@ -14,5 +14,8 @@
 template <class T>
 using InitiatorSignalSocket = sc_core::sc_port<sc_core::sc_signal_inout_if<T>, 1, sc_core::SC_ZERO_OR_MORE_BOUND>;
 
+template <class T>
+using RequiredInitiatorSignalSocket = sc_core::sc_port<sc_core::sc_signal_inout_if<T>, 1,
+                                                       sc_core::SC_ONE_OR_MORE_BOUND>;
 
 #endif

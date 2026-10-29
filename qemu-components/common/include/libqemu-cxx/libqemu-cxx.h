@@ -134,6 +134,7 @@ public:
     void vm_start();
     void vm_stop_paused();
 
+    /* prefer using IothreadLockGuard over manual lock / unlocks */
     void lock_iothread();
     void unlock_iothread();
     bool is_iothread_locked() const;
@@ -240,6 +241,23 @@ public:
     RcuReadLock& operator=(const RcuReadLock&) = delete;
     RcuReadLock(RcuReadLock&&);
     RcuReadLock& operator=(RcuReadLock&&);
+};
+
+class IothreadLockGuard final
+{
+public:
+    explicit IothreadLockGuard(LibQemu& qemu): m_qemu(qemu) { m_qemu.lock_iothread(); }
+
+    ~IothreadLockGuard() { m_qemu.unlock_iothread(); }
+
+    IothreadLockGuard(const IothreadLockGuard&) = delete;
+    IothreadLockGuard& operator=(const IothreadLockGuard&) = delete;
+
+    IothreadLockGuard(IothreadLockGuard&&) = delete;
+    IothreadLockGuard& operator=(IothreadLockGuard&&) = delete;
+
+private:
+    LibQemu& m_qemu;
 };
 
 class Object
@@ -780,6 +798,19 @@ public:
     Clock() = default;
     Clock(const Clock&) = default;
     Clock(const Object& o): Object(o) {}
+};
+
+class PciDevice : public Device
+{
+public:
+    static constexpr const char* const TYPE = "pci-device";
+
+    PciDevice() = default;
+    PciDevice(const PciDevice&) = default;
+    PciDevice(const Object& object): Device(object) {}
+
+    bool msi_notify(unsigned vector);
+    bool msix_notify(unsigned vector);
 };
 
 }; /* namespace qemu */
