@@ -12,14 +12,28 @@
 
 class QemuCpuArm : public QemuCpu
 {
+protected:
+    void init_secure_memory(bool has_el3)
+    {
+        if (p_has_secure_memory.get_value() && has_el3) {
+            secure_mem.init(m_dev, "secure-memory");
+        }
+    }
+
 public:
     static constexpr qemu::Target ARCH = qemu::Target::AARCH64;
 
+    cci::cci_param<bool> p_has_secure_memory;
+    QemuInitiatorSocket<> secure_mem;
     TargetSignalSocket<bool> power_on;
 
     QemuCpuArm(const sc_core::sc_module_name& name, QemuInstance& inst, const std::string& type_name,
                const char* cpu_type = nullptr)
-        : QemuCpu(name, inst, type_name, cpu_type), power_on("power_on")
+        : QemuCpu(name, inst, type_name, cpu_type)
+        , p_has_secure_memory("has_secure_memory", false,
+                              "Use a separate QEMU secure-memory address space")
+        , secure_mem("secure_mem", *this, inst)
+        , power_on("power_on")
     {
         auto poweroncb = std::bind(&QemuCpuArm::power_on_cb, this, std::placeholders::_1);
         power_on.register_value_changed_cb(poweroncb);

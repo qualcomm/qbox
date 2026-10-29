@@ -14,6 +14,7 @@
 #include "qemu-instance.h"
 #include "tlm-extensions/qemu-cpu-hint.h"
 #include "tlm-extensions/qemu-mr-hint.h"
+#include "tlm-extensions/qemu-memtx-attrs.h"
 #include <tlm_sockets_buswidth.h>
 
 class TlmTargetToQemuBridge : public tlm::tlm_fw_transport_if<>
@@ -94,6 +95,24 @@ public:
         if (trans.get_command() == tlm::TLM_IGNORE_COMMAND) {
             trans.set_response_status(tlm::TLM_OK_RESPONSE);
             return;
+        }
+
+        if (const auto* ext = trans.get_extension<gs::QemuMemTxSecureTlmExtension>()) attrs.secure = ext->value;
+        if (const auto* ext = trans.get_extension<gs::QemuMemTxSpaceTlmExtension>()) {
+            attrs.space = static_cast<uint8_t>(ext->value);
+        }
+        if (const auto* ext = trans.get_extension<gs::QemuMemTxUserTlmExtension>()) attrs.user = ext->value;
+        if (const auto* ext = trans.get_extension<gs::QemuMemTxMemoryTlmExtension>()) attrs.memory = ext->value;
+        if (const auto* ext = trans.get_extension<gs::QemuMemTxDebugTlmExtension>()) attrs.debug = ext->value;
+        if (const auto* ext = trans.get_extension<gs::QemuMemTxRequesterIdTlmExtension>()) {
+            attrs.requester_id = ext->value;
+        }
+        if (const auto* ext = trans.get_extension<gs::QemuMemTxPidTlmExtension>()) attrs.pid = ext->value;
+        if (const auto* ext = trans.get_extension<gs::QemuMemTxAddressTypeTlmExtension>()) {
+            attrs.address_type = ext->value;
+        }
+        if (const auto* ext = trans.get_extension<gs::QemuMemTxUnspecifiedTlmExtension>()) {
+            attrs.unspecified = ext->value;
         }
 
         current_cpu_save = push_current_cpu(trans);

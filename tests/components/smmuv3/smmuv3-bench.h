@@ -474,8 +474,8 @@ public:
 
     void attach_secure(tlm::tlm_generic_payload& txn, bool secure = true)
     {
-        auto* ext = new gs::smmuv3_secure_extension();
-        ext->secure = secure;
+        auto* ext = new gs::QemuMemTxSecureTlmExtension();
+        ext->value = secure;
         txn.set_extension(ext);
     }
 

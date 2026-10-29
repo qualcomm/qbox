@@ -22,6 +22,7 @@ unsigned int smmuv3_zip_archive_size() noexcept;
 #include <tlm_utils/simple_initiator_socket.h>
 #include <tlm_utils/simple_target_socket.h>
 #include <tlm-extensions/underlying-dmi.h>
+#include <tlm-extensions/qemu-memtx-attrs.h>
 #include <registers.h>
 #include <reg_model_maker/reg_model_maker.h>
 #include <zip_loader.h>
@@ -923,8 +924,8 @@ class smmuv3_tbu : public sc_core::sc_module
 
     static bool extract_secure(tlm::tlm_generic_payload& txn)
     {
-        auto* sx = txn.get_extension<smmuv3_secure_extension>();
-        return sx && sx->secure;
+        auto* secure = txn.get_extension<QemuMemTxSecureTlmExtension>();
+        return secure && secure->value;
     }
 
 public:

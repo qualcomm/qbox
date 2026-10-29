@@ -130,6 +130,7 @@ public:
         }
         cpu.set_prop_bool("has_el2", p_has_el2);
         cpu.set_prop_bool("has_el3", p_has_el3);
+        init_secure_memory(p_has_el3.get_value());
 
         cpu.set_prop_bool("start-powered-off", p_start_powered_off);
         cpu.set_prop_int("psci-conduit", get_psci_conduit_val());

@@ -10,10 +10,10 @@
 
 .set TESTER_ADDR,        0x40000
 .set MAIN_FIRMWARE_ADDR, 0x1000
-.set MAX_ITERATIONS,     0x7ff
+.set MAX_ITERATIONS,     0xfff
 .set VIRTUAL_TEST_ADDR,  0x80000000
-.set BOUNDARY_BYTES,     80
-.set NUM_PAGES,          2
+.set BOUNDARY_BYTES,     256
+.set NUM_PAGES,          4
 
 .text
 .global _start
@@ -178,6 +178,9 @@ fill_boundary_loop:
     add x7, x0, x7
 
     str x6, [x7]
+    ldr x8, [x7]
+    cmp x8, x6
+    b.ne diagnostic_error
 
     add x5, x5, #1
     b   fill_boundary_loop

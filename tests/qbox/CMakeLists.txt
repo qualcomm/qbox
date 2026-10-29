@@ -34,6 +34,9 @@ list(APPEND QBOX_CPU_TEST_NUM_CPU_COMBINATION
         "aarch64-ld-st-excl-fail-test:.*:accel=(hvf|kvm)"                         # Test fails due to ld/st ex
         "reset-test-cpu:.*:accel=hvf"                                             # Test fails
         "aarch64-smmu-router-stress-test-v2:.*:num-cpu=1:.*:accel=hvf"            # Doesn't start with only one CPU
+        "aarch64-smmu500-secure-attrs:.*:num-cpu=[^1]"                            # Test uses one secure EL3 CPU
+        "aarch64-smmu500-secure-attrs:.*:accel=(hvf|kvm)"                         # EL3 requires TCG
+        "aarch64-smmu500-secure-attrs:.*:threading=(MULTI|SINGLE)"                # Focused bridge test uses TLM-2.0
         "aarch64-dmi-test-reset:.*num-cpu=(4|32)"                                 # Intermittent SEGFAULT on Ubuntu (flaky, num-cpu>2)
 
         # Nonsensical tests
@@ -301,8 +304,8 @@ function(qbox_add_cpu_test target timeout_s)
                                                  -p test-bench.num_cpu=${num_cpu}
                                                  -p test-bench.inst_a.icount=${icount}
                                                  -p test-bench.inst_b.icount=${icount}
-                                                 $<$<STREQUAL:${icount},true>:-p test-bench.inst_a.icount_mips_shift=3>
-                                                 $<$<STREQUAL:${icount},true>:-p test-bench.inst_b.icount_mips_shift=3>
+                                                 "$<$<STREQUAL:${icount},true>:-p;test-bench.inst_a.icount_mips_shift=3>"
+                                                 "$<$<STREQUAL:${icount},true>:-p;test-bench.inst_b.icount_mips_shift=3>"
                                                  -p test-bench.inst_a.tcg_mode=${threading}
                                                  -p test-bench.inst_b.tcg_mode=${threading}
 
@@ -313,6 +316,7 @@ function(qbox_add_cpu_test target timeout_s)
                                                  -p test-bench.bulkmem.min_block_size=32
 
                                                  -p log_level=0
+                COMMAND_EXPAND_LISTS
                                                  )
             set_tests_properties(${test_name} PROPERTIES TIMEOUT ${timeout_s})
             if (GS_ENABLE_SANITIZERS)
