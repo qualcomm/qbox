@@ -12,9 +12,9 @@
 #include <functional>
 #include <limits>
 #include <cassert>
+#include <cinttypes>
 #include <set>
 #include <utility>
-#include <cinttypes>
 
 #include <tlm>
 
@@ -25,11 +25,13 @@
 #include <scp/report.h>
 
 #include <qemu-instance.h>
+#include <tlm-extensions/qemu-cpu-hint.h>
+#include <tlm-extensions/qemu-instance-hint.h>
 #include <tlm-extensions/qemu-mr-hint.h>
 #include <tlm-extensions/exclusive-access.h>
 #include <tlm-extensions/shmem_extension.h>
 #include <tlm-extensions/qemu-memtx-attrs.h>
-#include <tlm-extensions/underlying-dmi.h>
+#include <tlm-extensions/qemu-memtx-attr-extensions.h>
 #include <tlm_sockets_buswidth.h>
 
 class QemuInitiatorIface
@@ -42,17 +44,6 @@ public:
     virtual sc_core::sc_time initiator_get_local_time() = 0;
     virtual void initiator_set_local_time(const sc_core::sc_time&) = 0;
     virtual void initiator_async_run(qemu::Cpu::AsyncJobFn job) = 0;
-    virtual int initiator_iommu_attrs_to_index(const qemu::MemoryRegionOps::MemTxAttrs& attrs)
-    {
-        return attrs.secure ? 1 : 0;
-    }
-    virtual int initiator_iommu_num_indexes() { return 2; }
-    virtual qemu::MemoryRegionOps::MemTxAttrs initiator_iommu_attrs_for_index(int idx)
-    {
-        qemu::MemoryRegionOps::MemTxAttrs attrs;
-        attrs.secure = idx != 0;
-        return attrs;
-    }
 };
 
 /**
@@ -83,23 +74,21 @@ public:
     using TlmPayload = tlm::tlm_generic_payload;
     using MemTxResult = qemu::MemoryRegionOps::MemTxResult;
     using MemTxAttrs = qemu::MemoryRegionOps::MemTxAttrs;
-    using DmiRegion = QemuInstanceDmiManager::DmiRegion;
     using DmiRegionAlias = QemuInstanceDmiManager::DmiRegionAlias;
-
     using DmiRegionAliasKey = uint64_t;
 
 protected:
-    QemuInstance* m_inst;
-    QemuInitiatorIface& m_initiator;
-    qemu::Device m_dev;
+    QemuInstance* m_inst = nullptr;
+    std::unique_ptr<QemuInstanceHintTlmExtension> m_instance_hint;
+    QemuInitiatorIface* m_initiator = nullptr;
     gs::runonsysc m_on_sysc;
     int reentrancy = 0;
 
     std::atomic<bool> m_finished = false;
 
+    qemu::Cpu m_cpu;
     std::shared_ptr<qemu::AddressSpace> m_as;
     std::shared_ptr<qemu::MemoryListener> m_listener;
-    std::map<uint64_t, std::shared_ptr<qemu::IOMMUMemoryRegion>> m_mmio_mrs;
 
     class m_mem_obj
     {
@@ -110,31 +99,12 @@ protected:
     };
     m_mem_obj* m_r = nullptr;
 
-    // we use an ordered map to find and combine elements
     std::map<DmiRegionAliasKey, DmiRegionAlias::Ptr> m_dmi_aliases;
     using AliasesIterator = std::map<DmiRegionAliasKey, DmiRegionAlias::Ptr>::iterator;
 
     // Do not add the same target MR twice at one address.
     std::set<std::pair<uint64_t, uintptr_t>> m_qemu_mr_aliases;
-
-    // Mutable overload: ordered map (std::map-like) floor lookup
-    template <class Map>
-    static inline auto find_region(Map& table, uint64_t addr) -> typename Map::iterator
-    {
-        if (table.empty()) return table.end();
-
-        auto it = table.upper_bound(addr);
-        if (it != table.begin()) {
-            --it;
-            const auto& e = it->second;
-            const uint64_t masked_addr = (addr & ~e.addr_mask);
-
-            if (masked_addr == it->first) {
-                return it;
-            }
-        }
-        return table.end();
-    }
+    std::function<void(sc_dt::uint64, sc_dt::uint64)> m_invalidate_observer;
 
     void init_payload(TlmPayload& trans, tlm::tlm_command command, uint64_t addr, uint64_t* val, unsigned int size)
     {
@@ -146,8 +116,9 @@ protected:
         trans.set_byte_enable_length(0);
         trans.set_dmi_allowed(false);
         trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
-
-        m_initiator.initiator_customize_tlm_payload(trans);
+        trans.set_extension(m_instance_hint.get());
+        if (m_initiator != nullptr) m_initiator->initiator_customize_tlm_payload(trans);
+        if (const auto* cpu_hint = trans.get_extension<QemuCpuHintTlmExtension>()) set_cpu(cpu_hint->get_cpu());
     }
 
     void add_dmi_mr_alias(DmiRegionAlias::Ptr alias)
@@ -167,415 +138,46 @@ protected:
         m_r->m_root->del_subregion(alias->get_alias_mr());
     }
 
-    /**
-     * @brief Use DMI data to set up a qemu IOMMU translate
-     *
-     * @param te pointer to translate block that will be filled in
-     * @param iommumr memory region through which translation is being done
-     * @param base_addr base address of the iommumr memory region in the address space
-     * @param addr address to translate
-     * @param flags QEMU read/write request flags
-     * @param idx   index of translation block.
-     *
-     */
-    void dmi_translate(qemu::IOMMUMemoryRegion::IOMMUTLBEntry* te, std::shared_ptr<qemu::IOMMUMemoryRegion> iommumr,
-                       uint64_t base_addr, uint64_t addr, qemu::IOMMUMemoryRegion::IOMMUAccessFlags flags, int idx)
-    {
-        TlmPayload ltrans;
-        uint64_t tmp;
-        auto& translation_context = iommumr->translation_context(idx);
-
-        SCP_TRACE(())("dmi_translate for base 0x{:x} addr 0x{:x}", base_addr, addr);
-
-        /*
-         * Fast path : check to see if the TE is already cached, if so return it straight away.
-         * NB, this happens rarely, as QEMU will cache the result itself, but
-         * if the region returned previously covers more than a single min_page_sz, then QEMU will re-request
-         * for the other pages.
-         */
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-
-            auto it = find_region(translation_context.mappings, addr);
-            if (it != translation_context.mappings.end()) {
-                *te = it->second;
-                // This is the DMI cache, so we must re-construct the actual required TE from this case.
-                // It will likely have a 'stale' address.
-                te->iova = addr;
-                te->translated_addr = (it->second.translated_addr & ~(it->second.addr_mask)) +
-                                      (addr & (it->second.addr_mask));
-
-                SCP_TRACE(())
-                ("FAST translate for 0x{:x} :  0x{:x}->0x{:x} (mask 0x{:x}) perm={}", addr, te->iova,
-                 te->translated_addr, te->addr_mask, te->perm);
-
-                return;
-            }
-        }
-        /*
-         * Slow path, use DMI to investigate the memory, and see what sort of TE we can set up
-         *
-         * There are 3 options
-         * 1/ a real IOMMU region that should be mapped into the IOMMU address space
-         * 2/ a 'dmi-able' region which is not an IOMMU (e.g. local memory)
-         * 3/ a 'non-dmi-able' object (e.g. an MMIO device) - a minimum page size will be used for this.
-         *
-         */
-
-        SCP_DEBUG(())("Doing Translate for {:x} (Absolute 0x{:x})", addr, addr + base_addr);
-
-        gs::UnderlyingDMITlmExtension lu_dmi;
-        init_payload(ltrans, tlm::TLM_IGNORE_COMMAND, base_addr + addr, &tmp, 0);
-        ltrans.set_extension(&lu_dmi);
-        const auto qemu_attrs = iommumr->attrs_for_index(idx);
-        gs::QemuMemTxSecureTlmExtension secure_ext;
-        gs::QemuMemTxSpaceTlmExtension space_ext;
-        gs::QemuMemTxUserTlmExtension user_ext;
-        gs::QemuMemTxMemoryTlmExtension memory_ext;
-        gs::QemuMemTxDebugTlmExtension debug_ext;
-        gs::QemuMemTxRequesterIdTlmExtension requester_id_ext;
-        gs::QemuMemTxPidTlmExtension pid_ext;
-        gs::QemuMemTxAddressTypeTlmExtension address_type_ext;
-        gs::QemuMemTxUnspecifiedTlmExtension unspecified_ext;
-        secure_ext.value = qemu_attrs.secure;
-        space_ext.value = static_cast<gs::QemuSecuritySpace>(qemu_attrs.space);
-        user_ext.value = qemu_attrs.user;
-        memory_ext.value = qemu_attrs.memory;
-        debug_ext.value = qemu_attrs.debug;
-        requester_id_ext.value = qemu_attrs.requester_id;
-        pid_ext.value = qemu_attrs.pid;
-        address_type_ext.value = qemu_attrs.address_type;
-        unspecified_ext.value = qemu_attrs.unspecified;
-        ltrans.set_extension(&secure_ext);
-        ltrans.set_extension(&space_ext);
-        ltrans.set_extension(&user_ext);
-        ltrans.set_extension(&memory_ext);
-        ltrans.set_extension(&debug_ext);
-        ltrans.set_extension(&requester_id_ext);
-        ltrans.set_extension(&pid_ext);
-        ltrans.set_extension(&address_type_ext);
-        ltrans.set_extension(&unspecified_ext);
-        tlm::tlm_dmi ldmi_data;
-        bool dmi_valid = false;
-        bool iothread_locked = m_inst->get().is_iothread_locked();
-        if (iothread_locked) {
-            m_inst->get().unlock_iothread();
-        }
-        const bool completed = m_on_sysc.run_on_sysc(
-            [&] { dmi_valid = (*this)->get_direct_mem_ptr(ltrans, ldmi_data); });
-        if (iothread_locked) {
-            m_inst->get().lock_iothread();
-        }
-        if (completed && dmi_valid) {
-            if (lu_dmi.has_dmi(gs::tlm_dmi_ex::dmi_iommu)) {
-                // Add te to 'special' IOMMU address space
-                tlm::tlm_dmi lu_dmi_data = lu_dmi.get_last(gs::tlm_dmi_ex::dmi_iommu);
-                if (0 == translation_context.dmi_aliases.count(lu_dmi_data.get_start_address())) {
-                    qemu::RcuReadLock l_rcu_read_lock = m_inst->get().rcu_read_lock_new();
-                    // take our own memory here, dont use an alias as
-                    // we may have different sizes for the underlying DMI
-
-                    DmiRegion region = DmiRegion(lu_dmi_data, 0, m_inst->get());
-                    SCP_DEBUG(())
-                    ("Adding IOMMU DMI Region  start 0x{:x} - 0x{:x}", lu_dmi_data.get_start_address(),
-                     lu_dmi_data.get_start_address() + region.get_size() - 1);
-                    translation_context.root.add_subregion(region.get_mut_mr(), lu_dmi_data.get_start_address());
-                    translation_context.dmi_aliases[lu_dmi_data.get_start_address()] = std::make_shared<DmiRegion>(region);
-                }
-
-                te->target_as = translation_context.as->get_ptr();
-                auto mask = ldmi_data.get_end_address() - ldmi_data.get_start_address();
-                te->addr_mask = mask;
-                te->iova = addr;
-                te->translated_addr = (lu_dmi_data.get_start_address() +
-                                       (ldmi_data.get_dmi_ptr() - lu_dmi_data.get_dmi_ptr())) +
-                                      (addr & mask);
-                te->perm = (qemu::IOMMUMemoryRegion::IOMMUAccessFlags)ldmi_data.get_granted_access();
-
-                SCP_DEBUG(())
-                ("Translate IOMMU 0x{:x}->0x{:x} (mask 0x{:x})", te->iova, te->translated_addr, te->addr_mask);
-
-            } else {
-                // no underlying DMI, add a 1-1 passthrough to normal address space
-                if (0 == iommumr->m_dmi_aliases_io.count(ldmi_data.get_start_address())) {
-                    qemu::RcuReadLock l_rcu_read_lock = m_inst->get().rcu_read_lock_new();
-                    DmiRegionAlias::Ptr alias = m_inst->get_dmi_manager().get_new_region_alias(ldmi_data);
-                    SCP_DEBUG(()) << "Adding DMI Region alias " << *alias;
-                    qemu::MemoryRegion alias_mr = alias->get_alias_mr();
-                    iommumr->m_root_io.add_subregion(alias_mr, alias->get_start());
-                    alias->set_installed();
-                    iommumr->m_dmi_aliases_io[alias->get_start()] = alias;
-                }
-                auto mask = (static_cast<uint64_t>(1) << iommumr->min_page_sz) - 1;
-                te->target_as = iommumr->m_as_io->get_ptr();
-                te->addr_mask = mask;
-                te->iova = addr & ~mask;
-                te->translated_addr = (addr & ~mask) + base_addr;
-                te->perm = (qemu::IOMMUMemoryRegion::IOMMUAccessFlags)ldmi_data.get_granted_access();
-
-                SCP_DEBUG(())
-                ("Translate 1-1 passthrough 0x{:x}->0x{:x} (mask 0x{:x})", te->iova, te->translated_addr,
-                 te->addr_mask);
-            }
-
-            std::lock_guard<std::mutex> lock(m_mutex);
-            /* It is possible that this region overlaps an existing region (a 1-1 MMIO).
-             * QEMU will likely take this region, but both should be valid, and the other
-             * region will be removed in due course
-             */
-            translation_context.mappings[addr & ~te->addr_mask] = *te;
-
-            SCP_DEBUG(())
-            ("Caching TE at addr 0x{:x} (mask {:x})", addr & ~te->addr_mask, te->addr_mask);
-
-        } else {
-            // No DMI at all, either an MMIO, or a DMI failure, setup for a 1-1 translation for the minimal page
-            // in the normal address space
-
-            te->target_as = iommumr->m_as_io->get_ptr();
-            te->addr_mask = (static_cast<uint64_t>(1) << iommumr->min_page_sz) - 1;
-            te->iova = addr & ~te->addr_mask;
-            te->translated_addr = (addr & ~te->addr_mask) + base_addr;
-            te->perm = qemu::IOMMUMemoryRegion::IOMMU_RW;
-
-            if (translation_context.mappings.find(addr & ~te->addr_mask) != translation_context.mappings.end()) {
-                SCP_FATAL(())("Trying to add a 1-1 mapping over an existing mapping");
-            }
-            // We need to add it so we can remove it (!)
-            translation_context.mappings[addr & ~te->addr_mask] = *te;
-
-            SCP_DEBUG(())
-            ("Translate 1-1 limited passthrough  0x{:x}->0x{:x} (mask 0x{:x})", te->iova, te->translated_addr,
-             te->addr_mask);
-        }
-        ltrans.clear_extension(&secure_ext);
-        ltrans.clear_extension(&space_ext);
-        ltrans.clear_extension(&user_ext);
-        ltrans.clear_extension(&memory_ext);
-        ltrans.clear_extension(&debug_ext);
-        ltrans.clear_extension(&requester_id_ext);
-        ltrans.clear_extension(&pid_ext);
-        ltrans.clear_extension(&address_type_ext);
-        ltrans.clear_extension(&unspecified_ext);
-        ltrans.clear_extension(&lu_dmi);
-    }
-
-    /**
-     * @brief Request a DMI region, ask the QEMU instance DMI manager for a DMI
-     * region alias for it and map it on the CPU address space.
-     *
-     * @param trans DMI allowed transation
-     *
-     * @details Ideal, the whole operation could be done on the SystemC thread for
-     * simplicity. Unfortunately, QEMU misbehaves if the memory region alias
-     * subregion is mapped on the root MR by another thread than the CPU
-     * thread. This is related to some internal QEMU code taking different
-     * paths depending on the current thread. Basically if the subregion add is
-     * not done on the CPU thread, the modification won't be visible
-     * immediately by the CPU so the next memory access may go through the I/O
-     * path again.
-     *
-     * On the other hand we SHOULD do a bunch on the SystemC thread to ensure
-     * validity of the DMI region and thus the alias until the point where we
-     *  effectively map the alias onto the root MR. This is why we first create
-     * the alias on the SystemC thread and return it to the CPU thread. Once
-     * we're back to the CPU thread, we lock the DMI manager again and check
-     * for the alias validity flag. If an invalidation happened in between,
-     * this flag will be false and we know we can throw the entire DMI request.
-     *
-     * If the alias is valid after we took the lock, we can map it. If an
-     * invalidation must occur, it will be done after we release the lock.
-     *
-     * @note We choose to protect all such areas with a mutex, allowing us to
-     * process everything on the QEMU thread.
-     *
-     * @see QemuInstanceDmiManager for more information on why we need a global
-     *      MR per DMI region.
-     *
-     * @note All DMI activity MUST happen from the CPU thread (from an MMIO read/write or 'safe
-     * work') For 7.2 this may need to be safe aync work ????????
-     *
-     * @note Needs to be called with iothread locked as it will be doing several
-     * updates and we dont want multiple DMI's
-     *
-     * @returns The DMI descriptor for the corresponding DMI region - this is used to help construct memory maps only.
-     */
     tlm::tlm_dmi check_dmi_hint_locked(TlmPayload& trans)
     {
         assert(trans.is_dmi_allowed());
         tlm::tlm_dmi dmi_data;
-        int shm_fd = -1;
-        auto addr = trans.get_address();
-        /* We got a DMI hint, lets just make sure this isn't in an existing m_mmio_mrs region
-         * Because if it is, what probably happened is that we took the MMIO path
-         * rather than getting a translation done. We should invalidate any mmio 1-1 mapping
-         * for this address */
-        for (auto m : m_mmio_mrs) {
-            auto mr_start = m.first;
-            auto mr_end = m.first + m.second->get_size() - 1;
-            if (mr_start <= addr && addr <= mr_end) {
-                for (auto& [idx, context] : m.second->translation_contexts()) {
-                    auto it = find_region(context->mappings, addr - mr_start);
-                    if (it == context->mappings.end()) continue;
-
-                    uint64_t removed_addr = it->first + mr_start;
-                    SCP_TRACE(())("Suspected MMIO Region {} removed 0x{:x} (mask 0x{:x})", idx, removed_addr,
-                                  it->second.addr_mask);
-                    m.second->iommu_unmap(&(it->second));
-                    context->mappings.erase(it);
-                }
-                SCP_TRACE(())("Suspected MMIO Region(s) removed arround address 0x{:x}", addr);
-                return dmi_data;
-            }
-        }
-
-        SCP_INFO(()) << "DMI request for address 0x" << std::hex << trans.get_address();
-
-        gs::UnderlyingDMITlmExtension u_dmi;
-
-        trans.set_extension(&u_dmi);
         bool dmi_valid = false;
         const bool iothread_locked = m_inst->get().is_iothread_locked();
-        if (iothread_locked) {
-            m_inst->get().unlock_iothread();
-        }
-        const bool completed = m_on_sysc.run_on_sysc([&] { dmi_valid = (*this)->get_direct_mem_ptr(trans, dmi_data); });
-        if (iothread_locked) {
-            m_inst->get().lock_iothread();
-        }
-        trans.clear_extension(&u_dmi);
-        if (!completed || !dmi_valid) {
-            SCP_INFO(())("No DMI available for {:x}", trans.get_address());
-            /* this is used by the map function below
-             * - a better plan may be to tag memories to be mapped so we dont need this
-             */
-            if (u_dmi.has_dmi(gs::tlm_dmi_ex::dmi_mapped)) {
-                tlm::tlm_dmi first_map = u_dmi.get_first(gs::tlm_dmi_ex::dmi_mapped);
-                return first_map;
-            }
-            if (u_dmi.has_dmi(gs::tlm_dmi_ex::dmi_nomap)) {
-                tlm::tlm_dmi first_nomap = u_dmi.get_first(gs::tlm_dmi_ex::dmi_nomap);
-                return first_nomap;
-            }
-            return dmi_data;
-        }
+        if (iothread_locked) m_inst->get().unlock_iothread();
+        const bool completed = m_on_sysc.run_on_sysc([&] {
+            assert(m_on_sysc.is_on_sysc());
+            dmi_valid = (*this)->get_direct_mem_ptr(trans, dmi_data);
+        });
+        if (iothread_locked) m_inst->get().lock_iothread();
 
-        /*
-         * This is the 'special' case of IOMMU's which require an IOMMU memory region setup
-         * The IOMMU will be constructed here, but not populated - that will happen in the callback
-         * There will be a 'pair' of new regions, one to hold non iommu regions within this space,
-         * the other to hold iommu regions themselves.
-         *
-         * In extreme circumstances, if the IOMMU DMI to this region previously failed, we may have
-         * ended up with a normal DMI region here, which needs removing. We do that here, and then simply
-         * return and wait for a new access to sort things out.
-         */
-        if (u_dmi.has_dmi(gs::tlm_dmi_ex::dmi_iommu)) {
-            /* We have an IOMMU request setup an IOMMU region */
-            SCP_INFO(())("IOMMU DMI available for {:x}", trans.get_address());
+        if (!completed || !dmi_valid) return dmi_data;
 
-            /* The first mapped DMI will be the scope of the IOMMU region from our perspective */
-            tlm::tlm_dmi first_map = u_dmi.get_first(gs::tlm_dmi_ex::dmi_mapped);
+        int shm_fd = -1;
+        if (const auto* shm_ext = trans.get_extension<gs::ShmemIDExtension>()) shm_fd = shm_ext->m_fd;
 
-            uint64_t start = first_map.get_start_address();
-            uint64_t size = (first_map.get_end_address() - first_map.get_start_address()) + 1;
-            auto itr = m_mmio_mrs.find(start);
-            if (itr == m_mmio_mrs.end()) {
-                // Better check for overlapping iommu's - they must be banned     !!
+        const uint64_t start = dmi_data.get_start_address();
+        const uint64_t end = dmi_data.get_end_address();
+        if (start > end) return tlm::tlm_dmi{};
 
+        const bool topology_locked = m_inst->get().is_iothread_locked();
+        if (!topology_locked) m_inst->get().lock_iothread();
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            constexpr size_t max_map = 250;
+            if (m_dmi_aliases.size() > max_map) SCP_FATAL(())("Too many DMI regions requested");
+            if (0 == m_dmi_aliases.count(start)) {
+                SCP_INFO(()) << "Adding DMI for range [0x" << std::hex << dmi_data.get_start_address() << "-0x"
+                             << dmi_data.get_end_address() << "]";
                 qemu::RcuReadLock rcu_read_lock = m_inst->get().rcu_read_lock_new();
-
-                /* invalidate any 'old' regions we happen to have mapped previously */
-                invalidate_single_range(start, start + size - 1);
-
-                SCP_INFO(())
-                ("Adding IOMMU for VA 0x{:x} [0x{:x} - 0x{:x}]", trans.get_address(), start, start + size - 1);
-
-                using namespace std::placeholders;
-                qemu::MemoryRegionOpsPtr ops;
-                ops = m_inst->get().memory_region_ops_new();
-                ops->set_read_callback(std::bind(&QemuInitiatorSocket::qemu_io_read, this, _1, _2, _3, _4));
-                ops->set_write_callback(std::bind(&QemuInitiatorSocket::qemu_io_write, this, _1, _2, _3, _4));
-                ops->set_max_access_size(8);
-
-                auto iommumr = std::make_shared<qemu::IOMMUMemoryRegion>(
-                    m_inst->get().template object_new_unparented<qemu::IOMMUMemoryRegion>());
-
-                iommumr->init(*iommumr, "dmi-manager-iommu", size, ops,
-                              [=](qemu::IOMMUMemoryRegion::IOMMUTLBEntry* te, uint64_t addr,
-                                  qemu::IOMMUMemoryRegion::IOMMUAccessFlags flags,
-                                  int idx) { dmi_translate(te, iommumr, start, addr, flags, idx); },
-                              [this](qemu::MemoryRegionOps::MemTxAttrs attrs) {
-                                  return m_initiator.initiator_iommu_attrs_to_index(attrs);
-                              },
-                              [this] { return m_initiator.initiator_iommu_num_indexes(); },
-                              [this](int idx) { return m_initiator.initiator_iommu_attrs_for_index(idx); });
-                {
-                    std::lock_guard<std::mutex> lock(m_mutex);
-                    m_mmio_mrs[start] = iommumr;
-                }
-                m_r->m_root->add_subregion(*iommumr, start);
-
+                DmiRegionAlias::Ptr alias = m_inst->get_dmi_manager().get_new_region_alias(dmi_data, shm_fd);
+                m_dmi_aliases[start] = alias;
+                add_dmi_mr_alias(m_dmi_aliases[start]);
             } else {
-                // Previously when looking up a TE, we failed to get the lock, so the DMI failed, we ended up in a
-                // limited passthrough. Which causes us to re-arrive here.... but, with a DMI hint. Hopefully next time
-                // the TE is looked up, we'll get the lock and re-establish the translation. In any case we should do
-                // nothing and simply return
-                // Moving to a cached TE will improve speed and prevent this from happening?
-                SCP_DEBUG(())
-                ("Memory request should be directed via MMIO interface {:x} {:x}", start, trans.get_address());
-
-                //                std::lock_guard<std::mutex> lock(m_mutex);
-
-                uint64_t start_range = itr->first;
-                uint64_t end_range = itr->first + itr->second->get_size() - 1;
-
-                invalidate_direct_mem_ptr(start_range, end_range);
+                SCP_INFO(())("Already have DMI for 0x{:x}", start);
             }
-            return dmi_data;
         }
-
-        gs::ShmemIDExtension* shm_ext = trans.get_extension<gs::ShmemIDExtension>();
-        // it's ok that ShmemIDExtension is not added to trans as this should only happen when
-        // memory is a shared memory type.
-        if (shm_ext) {
-            shm_fd = shm_ext->m_fd;
-        }
-
-        SCP_INFO(()) << "DMI Adding for address 0x" << std::hex << trans.get_address();
-
-        // The upper limit is set within QEMU by the TBU
-        // e.g. 1k small pages for ARM.
-        // setting to 1/2 the size of the ARM TARGET_PAGE_SIZE,
-        // Comment from QEMU code:
-        /* The physical section number is ORed with a page-aligned
-         * pointer to produce the iotlb entries.  Thus it should
-         * never overflow into the page-aligned value.
-         */
-#define MAX_MAP 250
-
-        // Current function may be called by the MMIO thread which does not hold
-        // any RCU read lock. This is required in case of a memory transaction
-        // commit on a TCG accelerated Qemu instance
-        qemu::RcuReadLock rcu_read_lock = m_inst->get().rcu_read_lock_new();
-
-        if (m_dmi_aliases.size() > MAX_MAP) {
-            SCP_FATAL(())("Too many DMI regions requested, consider using an IOMMU");
-        }
-        uint64_t start = dmi_data.get_start_address();
-        uint64_t end = dmi_data.get_end_address();
-
-        if (0 == m_dmi_aliases.count(start)) {
-            SCP_INFO(()) << "Adding DMI for range [0x" << std::hex << dmi_data.get_start_address() << "-0x" << std::hex
-                         << dmi_data.get_end_address() << "]";
-
-            DmiRegionAlias::Ptr alias = m_inst->get_dmi_manager().get_new_region_alias(dmi_data, shm_fd);
-
-            m_dmi_aliases[start] = alias;
-            add_dmi_mr_alias(m_dmi_aliases[start]);
-        } else {
-            SCP_INFO(())("Already have DMI for 0x{:x}", start);
-        }
+        if (!topology_locked) m_inst->get().unlock_iothread();
         return dmi_data;
     }
 
@@ -600,6 +202,7 @@ protected:
         mapping_addr = trans.get_address() - ext->get_offset();
 
         const uint64_t target_size = target_mr.get_size();
+
         const uintptr_t target_mr_id = reinterpret_cast<uintptr_t>(target_mr.get_qemu_obj());
         const bool topology_locked = m_inst->get().is_iothread_locked();
         if (!topology_locked) m_inst->get().lock_iothread();
@@ -620,7 +223,7 @@ protected:
         using sc_core::sc_time;
 
         uint64_t addr = trans.get_address();
-        sc_time now = m_initiator.initiator_get_local_time();
+        sc_time now = m_initiator != nullptr ? m_initiator->initiator_get_local_time() : sc_core::sc_time_stamp();
 
         m_inst->get().unlock_iothread();
         m_on_sysc.run_on_sysc([this, &trans, &now] { (*this)->b_transport(trans, now); });
@@ -634,7 +237,7 @@ protected:
             if (trans.is_dmi_allowed()) check_dmi_hint_locked(trans);
         }
 
-        m_initiator.initiator_set_local_time(now);
+        if (m_initiator != nullptr) m_initiator->initiator_set_local_time(now);
     }
 
     void do_debug_access(TlmPayload& trans)
@@ -646,7 +249,8 @@ protected:
 
     void do_direct_access(TlmPayload& trans)
     {
-        sc_core::sc_time now = m_initiator.initiator_get_local_time();
+        sc_core::sc_time now = m_initiator != nullptr ? m_initiator->initiator_get_local_time()
+                                                      : sc_core::sc_time_stamp();
         (*this)->b_transport(trans, now);
     }
 
@@ -654,36 +258,10 @@ protected:
                                MemTxAttrs attrs)
     {
         TlmPayload trans;
-        if (m_finished) return qemu::MemoryRegionOps::MemTxError;
+        if (m_finished || m_inst == nullptr) return qemu::MemoryRegionOps::MemTxError;
 
         init_payload(trans, command, addr, val, size);
-        gs::QemuMemTxSecureTlmExtension secure_ext;
-        gs::QemuMemTxSpaceTlmExtension space_ext;
-        gs::QemuMemTxUserTlmExtension user_ext;
-        gs::QemuMemTxMemoryTlmExtension memory_ext;
-        gs::QemuMemTxDebugTlmExtension debug_ext;
-        gs::QemuMemTxRequesterIdTlmExtension requester_id_ext;
-        gs::QemuMemTxPidTlmExtension pid_ext;
-        gs::QemuMemTxAddressTypeTlmExtension address_type_ext;
-        gs::QemuMemTxUnspecifiedTlmExtension unspecified_ext;
-        secure_ext.value = attrs.secure;
-        space_ext.value = static_cast<gs::QemuSecuritySpace>(attrs.space);
-        user_ext.value = attrs.user;
-        memory_ext.value = attrs.memory;
-        debug_ext.value = attrs.debug;
-        requester_id_ext.value = attrs.requester_id;
-        pid_ext.value = attrs.pid;
-        address_type_ext.value = attrs.address_type;
-        unspecified_ext.value = attrs.unspecified;
-        trans.set_extension(&secure_ext);
-        trans.set_extension(&space_ext);
-        trans.set_extension(&user_ext);
-        trans.set_extension(&memory_ext);
-        trans.set_extension(&debug_ext);
-        trans.set_extension(&requester_id_ext);
-        trans.set_extension(&pid_ext);
-        trans.set_extension(&address_type_ext);
-        trans.set_extension(&unspecified_ext);
+        QemuMemTxAttrExtensions attr_exts(trans, attrs);
 
         if (trans.get_extension<ExclusiveAccessTlmExtension>()) {
             /* in the case of an exclusive access keep the iolock (and assume NO side-effects)
@@ -715,24 +293,14 @@ protected:
 
             reentrancy--;
         }
-        trans.clear_extension(&secure_ext);
-        trans.clear_extension(&space_ext);
-        trans.clear_extension(&user_ext);
-        trans.clear_extension(&memory_ext);
-        trans.clear_extension(&debug_ext);
-        trans.clear_extension(&requester_id_ext);
-        trans.clear_extension(&pid_ext);
-        trans.clear_extension(&address_type_ext);
-        trans.clear_extension(&unspecified_ext);
-        m_initiator.initiator_tidy_tlm_payload(trans);
+        trans.clear_extension(m_instance_hint.get());
+        if (m_initiator != nullptr) m_initiator->initiator_tidy_tlm_payload(trans);
 
         switch (trans.get_response_status()) {
         case tlm::TLM_OK_RESPONSE:
             return qemu::MemoryRegionOps::MemTxOK;
-
         case tlm::TLM_ADDRESS_ERROR_RESPONSE:
             return qemu::MemoryRegionOps::MemTxDecodeError;
-
         default:
             return qemu::MemoryRegionOps::MemTxError;
         }
@@ -749,43 +317,73 @@ public:
         return qemu_io_access(tlm::TLM_WRITE_COMMAND, addr, &val, size, attrs);
     }
 
+    qemu::MemoryRegionOpsPtr create_io_ops()
+    {
+        using namespace std::placeholders;
+
+        assert(m_inst);
+        qemu::LibQemu& inst = m_inst->get();
+        qemu::MemoryRegionOpsPtr ops = inst.memory_region_ops_new();
+        ops->set_read_callback(std::bind(&QemuInitiatorSocket::qemu_io_read, this, _1, _2, _3, _4));
+        ops->set_write_callback(std::bind(&QemuInitiatorSocket::qemu_io_write, this, _1, _2, _3, _4));
+        ops->set_max_access_size(8);
+        return ops;
+    }
+
     bool is_on_sysc() const { return std::this_thread::get_id() == m_thread_id; }
 
-    QemuInitiatorSocket(const char* name, QemuInitiatorIface& initiator, QemuInstance& inst)
+    QemuInitiatorSocket(const char* name, QemuInstance* inst = nullptr, QemuInitiatorIface* initiator = nullptr)
         : TlmInitiatorSocket(name)
-        , m_inst(&inst)
-        , m_initiator(initiator)
         , m_thread_id(std::this_thread::get_id())
+        , m_inst(inst)
+        , m_initiator(initiator)
         , m_on_sysc(sc_core::sc_gen_unique_name("initiator_run_on_sysc"))
     {
         SCP_DEBUG(()) << "QemuInitiatorSocket constructor";
         TlmInitiatorSocket::bind(*static_cast<tlm::tlm_bw_transport_if<>*>(this));
+        if (inst != nullptr) m_instance_hint = std::make_unique<QemuInstanceHintTlmExtension>(*inst);
+    }
+
+    QemuInitiatorSocket(const char* name, QemuInitiatorIface& initiator, QemuInstance& inst)
+        : QemuInitiatorSocket(name, &inst, &initiator)
+    {
+    }
+
+    void set_cpu(qemu::Cpu cpu)
+    {
+        if (!m_cpu.valid()) m_cpu = cpu;
+    }
+
+    void set_invalidate_observer(std::function<void(sc_dt::uint64, sc_dt::uint64)> observer)
+    {
+        m_invalidate_observer = std::move(observer);
     }
 
     void init(qemu::Device& dev, const char* prop)
     {
-        using namespace std::placeholders;
-
         qemu::LibQemu& inst = m_inst->get();
-        qemu::MemoryRegionOpsPtr ops;
-
-        m_r = new m_mem_obj(inst); // oot = inst.object_new<qemu::MemoryRegion>();
-        ops = inst.memory_region_ops_new();
-
-        ops->set_read_callback(std::bind(&QemuInitiatorSocket::qemu_io_read, this, _1, _2, _3, _4));
-        ops->set_write_callback(std::bind(&QemuInitiatorSocket::qemu_io_write, this, _1, _2, _3, _4));
-        ops->set_max_access_size(8);
-
+        m_r = new m_mem_obj(inst);
+        qemu::MemoryRegionOpsPtr ops = create_io_ops();
         m_r->m_root->init_io(dev, TlmInitiatorSocket::name(), std::numeric_limits<uint64_t>::max(), ops);
         dev.set_prop_link(prop, *m_r->m_root);
-
-        m_dev = dev;
     }
 
-    void end_of_simulation()
+    void init(qemu::IOMMUMemoryRegion& region)
     {
-        m_finished = true;
+        assert(m_inst);
+        assert(m_r == nullptr);
+        assert(!m_as);
+        m_r = new m_mem_obj(std::make_shared<qemu::MemoryRegion>(region.m_root_io));
+        m_as = region.m_as_io;
     }
+
+    qemu::AddressSpace& get_address_space()
+    {
+        assert(m_as);
+        return *m_as;
+    }
+
+    void end_of_simulation() { m_finished = true; }
 
     ~QemuInitiatorSocket()
     {
@@ -833,7 +431,8 @@ public:
             trans.set_address(current_addr);
         }
 
-        m_initiator.initiator_tidy_tlm_payload(trans);
+        trans.clear_extension(m_instance_hint.get());
+        if (m_initiator != nullptr) m_initiator->initiator_tidy_tlm_payload(trans);
     }
 
     void init_global(qemu::Device& dev)
@@ -841,13 +440,7 @@ public:
         using namespace std::placeholders;
 
         qemu::LibQemu& inst = m_inst->get();
-        qemu::MemoryRegionOpsPtr ops;
-        ops = inst.memory_region_ops_new();
-
-        ops->set_read_callback(std::bind(&QemuInitiatorSocket::qemu_io_read, this, _1, _2, _3, _4));
-        ops->set_write_callback(std::bind(&QemuInitiatorSocket::qemu_io_write, this, _1, _2, _3, _4));
-        ops->set_max_access_size(8);
-
+        qemu::MemoryRegionOpsPtr ops = create_io_ops();
         auto system_memory = inst.get_system_memory();
         system_memory->init_io(dev, TlmInitiatorSocket::name(), std::numeric_limits<uint64_t>::max() - 1, ops);
         m_r = new m_mem_obj(std::move(system_memory));
@@ -864,8 +457,6 @@ public:
         m_listener = inst.memory_listener_new();
         m_listener->set_map_callback(std::bind(&QemuInitiatorSocket::qemu_map, this, _1, _2, _3));
         m_listener->register_as(m_as);
-
-        m_dev = dev;
     }
 
     /* tlm::tlm_bw_transport_if<> */
@@ -879,46 +470,8 @@ public:
 
     virtual AliasesIterator remove_alias(AliasesIterator it)
     {
-        DmiRegionAlias::Ptr r = it->second; /*
-                                             * Invalidate this region. Do not bother with
-                                             * partial invalidation as it's really not worth
-                                             * it. Better let the target model returns sub-DMI
-                                             * regions during future accesses.
-                                             */
-
-        /*
-         * Mark the whole region this alias maps to as invalid. This has
-         * the effect of marking all the other aliases mapping to the same
-         * region as invalid too. If a DMI request for the same region is
-         * already in progress, it will have a chance to detect it is now
-         * invalid before mapping it on the QEMU root MR (see
-         * check_dmi_hint comment).
-         */
-        // r->invalidate_region();
-
-        assert(r->is_installed());
-        //        if (!r->is_installed()) {
-        /*
-         * The alias is not mapped onto the QEMU root MR yet. Simply
-         * skip it. It will be removed from m_dmi_aliases by
-         * check_dmi_hint.
-         */
-        //            return it++;
-        //        }
-
-        /*
-         * Remove the alias from the root MR. This is enough to perform
-         * required invalidations on QEMU's side in a thread-safe manner.
-         */
+        DmiRegionAlias::Ptr r = it->second;
         del_dmi_mr_alias(r);
-
-        /*
-         * Remove the alias from the collection. The DmiRegionAlias object
-         * is then destructed, leading to the destruction of the DmiRegion
-         * shared pointer it contains. When no more alias reference this
-         * region, it is in turn destructed, effectively destroying the
-         * corresponding memory region in QEMU.
-         */
         return m_dmi_aliases.erase(it);
     }
 
@@ -968,76 +521,21 @@ private:
         }
     }
 
-    bool region_match(uint64_t mr_rel_start, uint64_t mr_rel_end, uint64_t addr, uint64_t mask)
-    {
-        uint64_t end = addr + mask + 1;
-        return (mr_rel_start <= end && mr_rel_end >= addr);
-    }
-
 public:
     virtual void invalidate_direct_mem_ptr(sc_dt::uint64 start_range, sc_dt::uint64 end_range)
     {
         if (m_finished) return;
+        if (m_invalidate_observer) m_invalidate_observer(start_range, end_range);
         SCP_DEBUG(()) << "DMI invalidate [0x" << std::hex << start_range << ", 0x" << std::hex << end_range << "]";
-
+        if (!m_inst || !m_cpu.valid()) return;
         std::lock_guard<std::mutex> lock(m_mutex);
-
-        for (auto m : m_mmio_mrs) {
-            auto mr_start = m.first;
-            auto mr_end = m.first + m.second->get_size() - 1;
-            // if the MR overlaps or is overlapped by the invalidation range
-            if (start_range <= mr_end && mr_start <= end_range) {
-                auto mr_rel_start = start_range - mr_start;
-                auto mr_rel_end = end_range - mr_start;
-                for (auto& [idx, context] : m.second->translation_contexts()) {
-                    auto it = context->mappings.lower_bound(mr_rel_start);
-
-                    if (it != context->mappings.begin()) {
-                        auto prev = std::prev(it);
-                        if (region_match(mr_rel_start, mr_rel_end, prev->first, prev->second.addr_mask)) {
-                            const auto removed_addr = prev->first;
-                            const auto removed_mask = prev->second.addr_mask;
-                            m.second->iommu_unmap(&(prev->second));
-                            context->mappings.erase(prev);
-                            SCP_TRACE(())("Index {} region removed 0x{:x} (mask 0x{:x})", idx, removed_addr,
-                                          removed_mask);
-                        }
-                    }
-
-                    while (it != context->mappings.end() && it->first <= mr_rel_end) {
-                        if (region_match(mr_rel_start, mr_rel_end, it->first, it->second.addr_mask)) {
-                            const auto removed_addr = it->first;
-                            const auto removed_mask = it->second.addr_mask;
-                            m.second->iommu_unmap(&(it->second));
-                            it = context->mappings.erase(it);
-                            SCP_TRACE(())("Index {} region removed 0x{:x} (mask 0x{:x})", idx, removed_addr,
-                                          removed_mask);
-                        } else {
-                            ++it;
-                        }
-                    }
-                }
-
-                SCP_DEBUG(())("Region(s) removed in range [0x{:x} - 0x{:x}] from mr [0x{:x} - 0x{:x}]", start_range,
-                              end_range, mr_start, mr_end);
-                return;
-            }
-        }
-
         m_ranges.push_back(std::make_pair(start_range, end_range));
-        m_initiator.initiator_async_run([&]() { invalidate_ranges_safe_cb(); });
+        m_cpu.async_run([this] { invalidate_ranges_safe_cb(); });
     }
 
     virtual void reset()
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-
-        for (auto m : m_mmio_mrs) {
-            for (auto& [idx, context] : m.second->translation_contexts()) {
-                context->mappings.clear();
-            }
-        }
-
         auto it = m_dmi_aliases.begin();
         while (it != m_dmi_aliases.end()) {
             it = remove_alias(it);
