@@ -87,7 +87,7 @@ public:
     using DmiRegionAliasKey = uint64_t;
 
 protected:
-    QemuInstance& m_inst;
+    QemuInstance* m_inst;
     QemuInitiatorIface& m_initiator;
     qemu::Device m_dev;
     gs::runonsysc m_on_sysc;
@@ -252,25 +252,25 @@ protected:
         ltrans.set_extension(&unspecified_ext);
         tlm::tlm_dmi ldmi_data;
         bool dmi_valid = false;
-        bool iothread_locked = m_inst.get().is_iothread_locked();
+        bool iothread_locked = m_inst->get().is_iothread_locked();
         if (iothread_locked) {
-            m_inst.get().unlock_iothread();
+            m_inst->get().unlock_iothread();
         }
         const bool completed = m_on_sysc.run_on_sysc(
             [&] { dmi_valid = (*this)->get_direct_mem_ptr(ltrans, ldmi_data); });
         if (iothread_locked) {
-            m_inst.get().lock_iothread();
+            m_inst->get().lock_iothread();
         }
         if (completed && dmi_valid) {
             if (lu_dmi.has_dmi(gs::tlm_dmi_ex::dmi_iommu)) {
                 // Add te to 'special' IOMMU address space
                 tlm::tlm_dmi lu_dmi_data = lu_dmi.get_last(gs::tlm_dmi_ex::dmi_iommu);
                 if (0 == translation_context.dmi_aliases.count(lu_dmi_data.get_start_address())) {
-                    qemu::RcuReadLock l_rcu_read_lock = m_inst.get().rcu_read_lock_new();
+                    qemu::RcuReadLock l_rcu_read_lock = m_inst->get().rcu_read_lock_new();
                     // take our own memory here, dont use an alias as
                     // we may have different sizes for the underlying DMI
 
-                    DmiRegion region = DmiRegion(lu_dmi_data, 0, m_inst.get());
+                    DmiRegion region = DmiRegion(lu_dmi_data, 0, m_inst->get());
                     SCP_DEBUG(())
                     ("Adding IOMMU DMI Region  start 0x{:x} - 0x{:x}", lu_dmi_data.get_start_address(),
                      lu_dmi_data.get_start_address() + region.get_size() - 1);
@@ -293,8 +293,8 @@ protected:
             } else {
                 // no underlying DMI, add a 1-1 passthrough to normal address space
                 if (0 == iommumr->m_dmi_aliases_io.count(ldmi_data.get_start_address())) {
-                    qemu::RcuReadLock l_rcu_read_lock = m_inst.get().rcu_read_lock_new();
-                    DmiRegionAlias::Ptr alias = m_inst.get_dmi_manager().get_new_region_alias(ldmi_data);
+                    qemu::RcuReadLock l_rcu_read_lock = m_inst->get().rcu_read_lock_new();
+                    DmiRegionAlias::Ptr alias = m_inst->get_dmi_manager().get_new_region_alias(ldmi_data);
                     SCP_DEBUG(()) << "Adding DMI Region alias " << *alias;
                     qemu::MemoryRegion alias_mr = alias->get_alias_mr();
                     iommumr->m_root_io.add_subregion(alias_mr, alias->get_start());
@@ -430,13 +430,13 @@ protected:
 
         trans.set_extension(&u_dmi);
         bool dmi_valid = false;
-        const bool iothread_locked = m_inst.get().is_iothread_locked();
+        const bool iothread_locked = m_inst->get().is_iothread_locked();
         if (iothread_locked) {
-            m_inst.get().unlock_iothread();
+            m_inst->get().unlock_iothread();
         }
         const bool completed = m_on_sysc.run_on_sysc([&] { dmi_valid = (*this)->get_direct_mem_ptr(trans, dmi_data); });
         if (iothread_locked) {
-            m_inst.get().lock_iothread();
+            m_inst->get().lock_iothread();
         }
         trans.clear_extension(&u_dmi);
         if (!completed || !dmi_valid) {
@@ -478,7 +478,7 @@ protected:
             if (itr == m_mmio_mrs.end()) {
                 // Better check for overlapping iommu's - they must be banned     !!
 
-                qemu::RcuReadLock rcu_read_lock = m_inst.get().rcu_read_lock_new();
+                qemu::RcuReadLock rcu_read_lock = m_inst->get().rcu_read_lock_new();
 
                 /* invalidate any 'old' regions we happen to have mapped previously */
                 invalidate_single_range(start, start + size - 1);
@@ -488,13 +488,13 @@ protected:
 
                 using namespace std::placeholders;
                 qemu::MemoryRegionOpsPtr ops;
-                ops = m_inst.get().memory_region_ops_new();
+                ops = m_inst->get().memory_region_ops_new();
                 ops->set_read_callback(std::bind(&QemuInitiatorSocket::qemu_io_read, this, _1, _2, _3, _4));
                 ops->set_write_callback(std::bind(&QemuInitiatorSocket::qemu_io_write, this, _1, _2, _3, _4));
                 ops->set_max_access_size(8);
 
                 auto iommumr = std::make_shared<qemu::IOMMUMemoryRegion>(
-                    m_inst.get().template object_new_unparented<qemu::IOMMUMemoryRegion>());
+                    m_inst->get().template object_new_unparented<qemu::IOMMUMemoryRegion>());
 
                 iommumr->init(*iommumr, "dmi-manager-iommu", size, ops,
                               [=](qemu::IOMMUMemoryRegion::IOMMUTLBEntry* te, uint64_t addr,
@@ -552,7 +552,7 @@ protected:
         // Current function may be called by the MMIO thread which does not hold
         // any RCU read lock. This is required in case of a memory transaction
         // commit on a TCG accelerated Qemu instance
-        qemu::RcuReadLock rcu_read_lock = m_inst.get().rcu_read_lock_new();
+        qemu::RcuReadLock rcu_read_lock = m_inst->get().rcu_read_lock_new();
 
         if (m_dmi_aliases.size() > MAX_MAP) {
             SCP_FATAL(())("Too many DMI regions requested, consider using an IOMMU");
@@ -564,7 +564,7 @@ protected:
             SCP_INFO(()) << "Adding DMI for range [0x" << std::hex << dmi_data.get_start_address() << "-0x" << std::hex
                          << dmi_data.get_end_address() << "]";
 
-            DmiRegionAlias::Ptr alias = m_inst.get_dmi_manager().get_new_region_alias(dmi_data, shm_fd);
+            DmiRegionAlias::Ptr alias = m_inst->get_dmi_manager().get_new_region_alias(dmi_data, shm_fd);
 
             m_dmi_aliases[start] = alias;
             add_dmi_mr_alias(m_dmi_aliases[start]);
@@ -593,7 +593,7 @@ protected:
 
         mapping_addr = trans.get_address() - ext->get_offset();
 
-        qemu::MemoryRegion mr(m_inst.get().template object_new<qemu::MemoryRegion>());
+        qemu::MemoryRegion mr(m_inst->get().template object_new<qemu::MemoryRegion>());
 
         mr.init_alias(m_dev, "mr-alias", target_mr, 0, target_mr.get_size());
         m_r->m_root->add_subregion(mr, mapping_addr);
@@ -606,9 +606,9 @@ protected:
         uint64_t addr = trans.get_address();
         sc_time now = m_initiator.initiator_get_local_time();
 
-        m_inst.get().unlock_iothread();
+        m_inst->get().unlock_iothread();
         m_on_sysc.run_on_sysc([this, &trans, &now] { (*this)->b_transport(trans, now); });
-        m_inst.get().lock_iothread();
+        m_inst->get().lock_iothread();
         /*
          * Reset transaction address before dmi check (could be altered by
          * b_transport).
@@ -624,9 +624,9 @@ protected:
 
     void do_debug_access(TlmPayload& trans)
     {
-        m_inst.get().unlock_iothread();
+        m_inst->get().unlock_iothread();
         m_on_sysc.run_on_sysc([this, &trans] { (*this)->transport_dbg(trans); });
-        m_inst.get().lock_iothread();
+        m_inst->get().lock_iothread();
     }
 
     void do_direct_access(TlmPayload& trans)
@@ -676,16 +676,16 @@ protected:
              */
             do_direct_access(trans);
         } else {
-            std::unique_lock<std::recursive_mutex> io_lock(m_inst.g_rec_qemu_io_lock, std::try_to_lock);
+            std::unique_lock<std::recursive_mutex> io_lock(m_inst->g_rec_qemu_io_lock, std::try_to_lock);
             if (!io_lock.owns_lock() && !is_on_sysc()) {
                 /* Allow only a single access, but handle re-entrant code,
                  * while allowing side-effects in SystemC (e.g. calling wait)
                  * [NB re-entrant code caused via memory listeners to
                  * creation of memory regions (due to DMI) in some models]
                  */
-                m_inst.get().unlock_iothread();
+                m_inst->get().unlock_iothread();
                 io_lock.lock();
-                m_inst.get().lock_iothread();
+                m_inst->get().lock_iothread();
             }
             reentrancy++;
 
@@ -738,7 +738,7 @@ public:
 
     QemuInitiatorSocket(const char* name, QemuInitiatorIface& initiator, QemuInstance& inst)
         : TlmInitiatorSocket(name)
-        , m_inst(inst)
+        , m_inst(&inst)
         , m_initiator(initiator)
         , m_thread_id(std::this_thread::get_id())
         , m_on_sysc(sc_core::sc_gen_unique_name("initiator_run_on_sysc"))
@@ -751,7 +751,7 @@ public:
     {
         using namespace std::placeholders;
 
-        qemu::LibQemu& inst = m_inst.get();
+        qemu::LibQemu& inst = m_inst->get();
         qemu::MemoryRegionOpsPtr ops;
 
         m_r = new m_mem_obj(inst); // oot = inst.object_new<qemu::MemoryRegion>();
@@ -825,7 +825,7 @@ public:
     {
         using namespace std::placeholders;
 
-        qemu::LibQemu& inst = m_inst.get();
+        qemu::LibQemu& inst = m_inst->get();
         qemu::MemoryRegionOpsPtr ops;
         ops = inst.memory_region_ops_new();
 
