@@ -12,6 +12,8 @@
 #include <functional>
 #include <limits>
 #include <cassert>
+#include <set>
+#include <utility>
 #include <cinttypes>
 
 #include <tlm>
@@ -111,6 +113,9 @@ protected:
     // we use an ordered map to find and combine elements
     std::map<DmiRegionAliasKey, DmiRegionAlias::Ptr> m_dmi_aliases;
     using AliasesIterator = std::map<DmiRegionAliasKey, DmiRegionAlias::Ptr>::iterator;
+
+    // Do not add the same target MR twice at one address.
+    std::set<std::pair<uint64_t, uintptr_t>> m_qemu_mr_aliases;
 
     // Mutable overload: ordered map (std::map-like) floor lookup
     template <class Map>
@@ -574,7 +579,7 @@ protected:
         return dmi_data;
     }
 
-    void check_qemu_mr_hint(TlmPayload& trans)
+    bool check_qemu_mr_hint(TlmPayload& trans)
     {
         QemuMrHintTlmExtension* ext = nullptr;
         uint64_t mapping_addr;
@@ -582,21 +587,32 @@ protected:
         trans.get_extension(ext);
 
         if (ext == nullptr) {
-            return;
+            return false;
         }
 
         qemu::MemoryRegion target_mr(ext->get_mr());
 
-        if (target_mr.get_inst_id() != m_dev.get_inst_id()) {
-            return;
+        if (m_r == nullptr || !target_mr.same_inst_as(*m_r->m_root)) {
+            return false;
         }
 
+        if (ext->get_offset() > trans.get_address()) return false;
         mapping_addr = trans.get_address() - ext->get_offset();
 
-        qemu::MemoryRegion mr(m_inst->get().template object_new<qemu::MemoryRegion>());
-
-        mr.init_alias(m_dev, "mr-alias", target_mr, 0, target_mr.get_size());
-        m_r->m_root->add_subregion(mr, mapping_addr);
+        const uint64_t target_size = target_mr.get_size();
+        const uintptr_t target_mr_id = reinterpret_cast<uintptr_t>(target_mr.get_qemu_obj());
+        const bool topology_locked = m_inst->get().is_iothread_locked();
+        if (!topology_locked) m_inst->get().lock_iothread();
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            if (m_qemu_mr_aliases.emplace(mapping_addr, target_mr_id).second) {
+                auto mr = m_inst->get().template object_new<qemu::MemoryRegion>();
+                mr.init_alias(*m_r->m_root, "mr-alias", target_mr, 0, target_size);
+                m_r->m_root->add_subregion(mr, mapping_addr);
+            }
+        }
+        if (!topology_locked) m_inst->get().unlock_iothread();
+        return true;
     }
 
     void do_regular_access(TlmPayload& trans)
@@ -614,9 +630,8 @@ protected:
          * b_transport).
          */
         trans.set_address(addr);
-        check_qemu_mr_hint(trans);
-        if (trans.is_dmi_allowed()) {
-            check_dmi_hint_locked(trans);
+        if (!check_qemu_mr_hint(trans)) {
+            if (trans.is_dmi_allowed()) check_dmi_hint_locked(trans);
         }
 
         m_initiator.initiator_set_local_time(now);
