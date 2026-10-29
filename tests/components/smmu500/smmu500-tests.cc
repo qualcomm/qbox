@@ -17,6 +17,134 @@ TEST_BENCH(smmu500_test_bench, S2CRBypass)
     ASSERT_EQ(static_cast<uint32_t>(smmu.SMMU_NSGFSR), 0u);
 }
 
+TEST_BENCH(smmu500_test_bench, PTWDMIInvalidationKeepsNonOverlappingHits)
+{
+    configure_page_table(0x8000);
+    memory.reset_dma_observations();
+    uint32_t value = 0;
+    ASSERT_EQ(tbu_read32(0x1234, value), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(memory.dma_transport_count, 1u);
+    ASSERT_EQ(memory.dmi_query_count, 1u);
+
+    memory.invalidate_memory_dmi(0x400000, 0x400fff);
+    mmio_write32(smmu.SMMU_CB_TLBIALL.get_offset(), 0);
+    ASSERT_EQ(tbu_read32(0x1234, value), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(memory.dma_transport_count, 1u);
+    ASSERT_EQ(memory.dmi_query_count, 1u);
+
+    memory.invalidate_memory_dmi(0x4000, 0x600f);
+    mmio_write32(smmu.SMMU_CB_TLBIALL.get_offset(), 0);
+    ASSERT_EQ(tbu_read32(0x1234, value), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(memory.dma_transport_count, 2u);
+    ASSERT_EQ(memory.dmi_query_count, 2u);
+}
+
+TEST_BENCH(smmu500_test_bench, PTWDMIRequiresReadableFullDescriptors)
+{
+    const smmu500_security_observing_memory::dmi_mode modes[] = {
+        smmu500_security_observing_memory::dmi_mode::refuse,
+        smmu500_security_observing_memory::dmi_mode::write_only,
+        smmu500_security_observing_memory::dmi_mode::short_seven_bytes,
+    };
+
+    configure_page_table(0x8000);
+    uint32_t value = 0;
+    for (const auto mode : modes) {
+        memory.dma_dmi_mode = mode;
+        memory.invalidate_memory_dmi(0, UINT64_MAX);
+        mmio_write32(smmu.SMMU_CB_TLBIALL.get_offset(), 0);
+        memory.reset_dma_observations();
+        ASSERT_EQ(tbu_read32(0x1234, value), tlm::TLM_OK_RESPONSE);
+        ASSERT_EQ(memory.dma_transport_count, 3u);
+        ASSERT_EQ(memory.dmi_query_count, 3u);
+
+        mmio_write32(smmu.SMMU_CB_TLBIALL.get_offset(), 0);
+        ASSERT_EQ(tbu_read32(0x1234, value), tlm::TLM_OK_RESPONSE);
+        ASSERT_EQ(memory.dma_transport_count, 6u);
+        ASSERT_EQ(memory.dmi_query_count, 6u);
+    }
+}
+
+TEST_BENCH(smmu500_test_bench, PTWDMIKeepsSecurityInSnapshot)
+{
+    configure_page_table(0x8000);
+    memory.clear_security_states();
+    memory.reset_dma_observations();
+    uint32_t value = 0;
+
+    ASSERT_EQ(tbu_read32_with_security(0x1234, value, true), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(memory.dma_transport_count, 1u);
+    ASSERT_EQ(memory.dmi_query_count, 1u);
+    mmio_write32(smmu.SMMU_CB_TLBIALL.get_offset(), 0);
+    ASSERT_EQ(tbu_read32_with_security(0x1234, value, true), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(memory.dma_transport_count, 1u);
+    ASSERT_EQ(memory.dmi_query_count, 1u);
+
+    mmio_write32(smmu.SMMU_CB_TLBIALL.get_offset(), 0);
+    ASSERT_EQ(tbu_read32_with_security(0x1234, value, false), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(memory.dma_transport_count, 2u);
+    ASSERT_EQ(memory.dmi_query_count, 2u);
+    mmio_write32(smmu.SMMU_CB_TLBIALL.get_offset(), 0);
+    ASSERT_EQ(tbu_read32_with_security(0x1234, value, true), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(memory.dma_transport_count, 3u);
+    ASSERT_EQ(memory.dmi_query_count, 3u);
+    ASSERT_EQ(memory.dmi_security_states.size(), 3u);
+    ASSERT_TRUE(memory.dmi_security_states[0].has_value());
+    ASSERT_TRUE(*memory.dmi_security_states[0]);
+    ASSERT_TRUE(memory.dmi_security_states[1].has_value());
+    ASSERT_FALSE(*memory.dmi_security_states[1]);
+    ASSERT_TRUE(memory.dmi_security_states[2].has_value());
+    ASSERT_TRUE(*memory.dmi_security_states[2]);
+    bool saw_secure = false;
+    bool saw_nonsecure = false;
+    for (const auto& state : memory.security_states) {
+        ASSERT_TRUE(state.has_value());
+        saw_secure |= *state;
+        saw_nonsecure |= !*state;
+    }
+    ASSERT_TRUE(saw_secure);
+    ASSERT_TRUE(saw_nonsecure);
+}
+
+TEST_BENCH(smmu500_test_bench, PTWDMIGrantReturnedAfterInvalidationIsCached)
+{
+    configure_page_table(0x8000);
+    memory.reset_dma_observations();
+    memory.invalidate_dmi_during_query = true;
+    uint32_t value = 0;
+    ASSERT_EQ(tbu_read32(0x1234, value), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(memory.dma_transport_count, 1u);
+    ASSERT_EQ(memory.dmi_query_count, 1u);
+
+    mmio_write32(smmu.SMMU_CB_TLBIALL.get_offset(), 0);
+    ASSERT_EQ(tbu_read32(0x1234, value), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(memory.dma_transport_count, 1u);
+    ASSERT_EQ(memory.dmi_query_count, 1u);
+}
+
+TEST_BENCH(smmu500_test_bench, PTWDMIUsesLiveDescriptorsAfterTLBI)
+{
+    configure_page_table(0x8000);
+    uint32_t old_value = 0x11111111;
+    uint32_t new_value = 0x22222222;
+    write_memory64(0x8234, (static_cast<uint64_t>(new_value) << 32) | old_value);
+    write_memory64(0x9234, (static_cast<uint64_t>(old_value) << 32) | new_value);
+    memory.reset_dma_observations();
+
+    uint32_t value = 0;
+    ASSERT_EQ(tbu_read32(0x1234, value), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(value, old_value);
+    ASSERT_EQ(memory.dma_transport_count, 1u);
+    ASSERT_EQ(memory.dmi_query_count, 1u);
+
+    write_memory64(0x6008, 0x9000 | 0x3 | (1ULL << 6) | (1ULL << 10));
+    mmio_write32(smmu.SMMU_CB_TLBIALL.get_offset(), 0);
+    ASSERT_EQ(tbu_read32(0x1234, value), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(value, new_value);
+    ASSERT_EQ(memory.dma_transport_count, 1u);
+    ASSERT_EQ(memory.dmi_query_count, 1u);
+}
+
 TEST_BENCH(smmu500_test_bench, ResetAndIdentificationRegisters)
 {
     ASSERT_EQ(mmio_read32(smmu500_test_regs::SIDR0) & 0xffu, 2u);
@@ -321,8 +449,7 @@ TEST_BENCH(smmu500_test_bench, NSGFSRWriteOneToClearPreservesOtherFaults)
     smmu.SMMU_SMR[0][smmu.SMR_VALID] = 0;
     smmu.SMMU_NSCR0 = smmu500_test_regs::USFCFG;
     translate();
-    ASSERT_EQ(static_cast<uint32_t>(smmu.SMMU_NSGFSR),
-              smmu500_test_regs::ICF | smmu500_test_regs::USF);
+    ASSERT_EQ(static_cast<uint32_t>(smmu.SMMU_NSGFSR), smmu500_test_regs::ICF | smmu500_test_regs::USF);
 
     mmio_write32(smmu500_test_regs::NSGFSR, smmu500_test_regs::ICF);
     ASSERT_EQ(mmio_read32(smmu500_test_regs::NSGFSR), smmu500_test_regs::USF);
@@ -359,8 +486,7 @@ TEST_BENCH(smmu500_test_bench, NonSecureGlobalStatusFrameIsAccessible)
 {
     uint32_t value = UINT32_MAX;
 
-    ASSERT_EQ(mmio_read32_with_security(smmu500_test_regs::NSTLBGSTATUS, false, &value),
-              tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(mmio_read32_with_security(smmu500_test_regs::NSTLBGSTATUS, false, &value), tlm::TLM_OK_RESPONSE);
     ASSERT_EQ(value, 0u);
 }
 
@@ -371,8 +497,7 @@ TEST_BENCH(smmu500_test_bench, SecureControlWriteUpdatesTranslationAndInvalidate
     ASSERT_TRUE(tbu_get_dmi_with_security(0x1234, dmi, true));
     dmi_invalidations.clear();
 
-    ASSERT_EQ(mmio_write32_with_security(smmu500_test_regs::SCR0, smmu500_test_regs::GFRE, true),
-              tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(mmio_write32_with_security(smmu500_test_regs::SCR0, smmu500_test_regs::GFRE, true), tlm::TLM_OK_RESPONSE);
     ASSERT_EQ(static_cast<uint32_t>(smmu.SMMU_SCR0), smmu500_test_regs::GFRE);
     ASSERT_EQ(dmi_invalidations.size(), 1u);
     ASSERT_EQ(dmi_invalidations[0].first, dmi.get_start_address());
@@ -384,8 +509,7 @@ TEST_BENCH(smmu500_test_bench, NonSecureRegisterAccessPermitsSACRReadAndWrite)
     constexpr uint32_t sacr_value = 0x5a5a5a5a;
 
     ASSERT_EQ(mmio_read32_with_security(smmu500_test_regs::SACR, false), tlm::TLM_OK_RESPONSE);
-    ASSERT_EQ(mmio_write32_with_security(smmu500_test_regs::SACR, sacr_value, false),
-              tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(mmio_write32_with_security(smmu500_test_regs::SACR, sacr_value, false), tlm::TLM_OK_RESPONSE);
 }
 
 TEST_BENCH(smmu500_test_bench, SACRIsBankedBySecurityState)
@@ -396,14 +520,12 @@ TEST_BENCH(smmu500_test_bench, SACRIsBankedBySecurityState)
     uint32_t value = 0;
 
     smmu.SMMU_SACR = secure_value;
-    ASSERT_EQ(mmio_write32_with_security(smmu500_test_regs::SACR, non_secure_value, false),
-              tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(mmio_write32_with_security(smmu500_test_regs::SACR, non_secure_value, false), tlm::TLM_OK_RESPONSE);
     ASSERT_EQ(static_cast<uint32_t>(smmu.SMMU_SACR), secure_value);
     ASSERT_EQ(mmio_read32_with_security(smmu500_test_regs::SACR, false, &value), tlm::TLM_OK_RESPONSE);
     ASSERT_EQ(value, non_secure_value);
 
-    ASSERT_EQ(mmio_write32_with_security(smmu500_test_regs::NSACR, alias_value, true),
-              tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(mmio_write32_with_security(smmu500_test_regs::NSACR, alias_value, true), tlm::TLM_OK_RESPONSE);
     ASSERT_EQ(mmio_read32_with_security(smmu500_test_regs::SACR, false, &value), tlm::TLM_OK_RESPONSE);
     ASSERT_EQ(value, alias_value);
     ASSERT_EQ(mmio_write32_with_security(smmu500_test_regs::NSACR, 0, false), tlm::TLM_OK_RESPONSE);
@@ -439,8 +561,7 @@ TEST_BENCH(smmu500_test_bench, GASRAERestrictsNonSecureGlobalAccess)
               tlm::TLM_ADDRESS_ERROR_RESPONSE);
     ASSERT_EQ(mmio_read32_with_security(smmu500_test_regs::NSTLBGSTATUS, false, &value),
               tlm::TLM_ADDRESS_ERROR_RESPONSE);
-    ASSERT_EQ(mmio_read32_with_security(smmu500_test_regs::NSTLBGSTATUS, true, &value),
-              tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(mmio_read32_with_security(smmu500_test_regs::NSTLBGSTATUS, true, &value), tlm::TLM_OK_RESPONSE);
 }
 
 TEST_BENCH(smmu500_test_bench, NonSecureIdentificationRegistersUseSecureAllocation)
@@ -858,6 +979,35 @@ TEST_BENCH(smmu500_multi_tbu_test_bench, NestedStage1Stage2Translation)
     ASSERT_EQ(read_memory32(0x8234), 0xA5A5A5A5u);
 }
 
+TEST_BENCH(smmu500_multi_tbu_test_bench, NestedTranslationRemapsTablesAndFinalIpa)
+{
+    configure_nested_identity_context();
+    constexpr uint64_t s2_flags = 0x3 | (1ULL << 6) | (1ULL << 7) | (1ULL << 10);
+    write_memory64(0x201020, 0x14000 | s2_flags);
+    write_memory64(0x201028, 0x15000 | s2_flags);
+    write_memory64(0x201030, 0x16000 | s2_flags);
+    write_memory64(0x201040, 0x18000 | s2_flags);
+
+    // Stage-1 descriptors contain IPAs, even though their storage is remapped.
+    write_memory64(0x14000, 0x5000 | 0x3);
+    write_memory64(0x15000, 0x6000 | 0x3);
+    write_memory64(0x16008, 0x8000 | 0x3 | (1ULL << 6) | (1ULL << 10));
+    write_memory64(0x4000, 0);
+    write_memory64(0x5000, 0);
+    write_memory64(0x6008, 0);
+
+    ASSERT_EQ(tbu_write32(0x1234, 0xA5A5A5A5), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(read_memory32(0x18234), 0xA5A5A5A5u);
+    ASSERT_EQ(read_memory32(0x8234), 0u);
+    tlm::tlm_dmi dmi;
+    ASSERT_TRUE(tbu_get_dmi(0x1234, dmi));
+    ASSERT_EQ(dmi.get_start_address(), 0x1000u);
+    ASSERT_EQ(dmi.get_end_address(), 0x1fffu);
+    uint32_t value;
+    std::memcpy(&value, dmi.get_dmi_ptr() + 0x234, sizeof(value));
+    ASSERT_EQ(value, 0xA5A5A5A5u);
+}
+
 TEST_BENCH(smmu500_multi_tbu_test_bench, NestedTranslationIntersectsPermissions)
 {
     configure_nested_identity_context();
@@ -1036,6 +1186,16 @@ TEST_BENCH(smmu500_test_bench, Stage1SixtyFourKGranuleTranslates)
 
     ASSERT_EQ(tbu_write32(0x1234, 0x64646464), tlm::TLM_OK_RESPONSE);
     ASSERT_EQ(read_memory32(0x201234), 0x64646464u);
+}
+
+TEST_BENCH(smmu500_test_bench, TBUDMIUsesSixtyFourKGranuleRange)
+{
+    configure_large_granule_page_table(1, 0x200000);
+
+    tlm::tlm_dmi dmi;
+    ASSERT_TRUE(tbu_get_dmi(0x1234, dmi));
+    ASSERT_EQ(dmi.get_start_address(), 0u);
+    ASSERT_EQ(dmi.get_end_address(), 0xffffu);
 }
 
 TEST_BENCH(smmu500_test_bench, Stage1BlockDescriptorTranslates)
@@ -1286,6 +1446,28 @@ TEST_BENCH(smmu500_test_bench, TBUDMIAllowsSecurityAnnotatedTransportWithEquival
     ASSERT_TRUE(txn.is_dmi_allowed());
 }
 
+#ifndef WITHOUT_QEMU
+TEST_BENCH(smmu500_test_bench, NativeTBUTransportDoesNotCreateQemuMrHint)
+{
+    configure_page_table(0x8000);
+
+    uint32_t value = 0;
+    tlm::tlm_generic_payload txn;
+    txn.set_command(tlm::TLM_READ_COMMAND);
+    txn.set_address(0x1234);
+    txn.set_data_ptr(reinterpret_cast<unsigned char*>(&value));
+    txn.set_data_length(sizeof(value));
+    txn.set_streaming_width(sizeof(value));
+    txn.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+
+    sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+    tbu_initiator->b_transport(txn, delay);
+
+    ASSERT_EQ(txn.get_response_status(), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(txn.get_extension<QemuMrHintTlmExtension>(), nullptr);
+}
+#endif
+
 TEST_BENCH(smmu500_test_bench, TBUDMIPreservesSecurityAnnotatedTransportWhenControlsDiffer)
 {
     configure_page_table(0x8000);
@@ -1484,8 +1666,7 @@ TEST_BENCH(smmu500_test_bench, NonSecureTLBIALLNSNHInvalidatesDMI)
     ASSERT_TRUE(tbu_get_dmi(0x1234, dmi));
     dmi_invalidations.clear();
 
-    ASSERT_EQ(mmio_write32_with_security(smmu500_test_regs::TLBIALLNSNH, 0, false),
-              tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(mmio_write32_with_security(smmu500_test_regs::TLBIALLNSNH, 0, false), tlm::TLM_OK_RESPONSE);
     ASSERT_EQ(dmi_invalidations.size(), 1u);
     ASSERT_EQ(dmi_invalidations[0].first, 0x1000u);
     ASSERT_EQ(dmi_invalidations[0].second, 0x1fffu);
