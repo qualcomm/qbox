@@ -51,6 +51,7 @@ smmu500<BUSWIDTH>::smmu500(sc_core::sc_module_name _name)
     , p_num_tbu("num_tbu", 1, "")
     , socket("target_socket")
     , dma_socket("dma")
+    , m_dma_on_sysc("dma_on_sysc")
     , irq_global("irq_global")
     , irq_context("irq_context", p_num_cb,
                   [this](const char* n, size_t i) { return new InitiatorSignalSocket<bool>(n); })
@@ -64,6 +65,7 @@ smmu500<BUSWIDTH>::smmu500(sc_core::sc_module_name _name)
     socket.register_b_transport(this, &smmu500::smmu500_register_b_transport);
     socket.register_transport_dbg(this, &smmu500::smmu500_register_transport_dbg);
     socket.register_get_direct_mem_ptr(this, &smmu500::smmu500_register_get_direct_mem_ptr);
+    dma_socket.register_invalidate_direct_mem_ptr(this, &smmu500::invalidate_dma_dmi);
     m_register_socket.bind(M.target_socket);
     reset.register_value_changed_cb([&](bool value) {
         if (value) {
@@ -93,8 +95,8 @@ void smmu500<BUSWIDTH>::start_of_simulation()
     std::memcpy(m_non_secure_gr0_shadow.data() + 0x010, &sacr, sizeof(sacr));
     SCR1_NSNUMCBO = static_cast<uint32_t>(p_num_cb);
     SCR1_NSNUMSMRGO = static_cast<uint32_t>(p_num_smr);
-    SCP_DEBUG(()) << "SMMU configured SMR count " << static_cast<unsigned int>(p_num_smr)
-                 << ", SIDR0.NUMSMRG 0x" << std::hex << static_cast<uint32_t>(SIDR0_NUMSMRG);
+    SCP_DEBUG(()) << "SMMU configured SMR count " << static_cast<unsigned int>(p_num_smr) << ", SIDR0.NUMSMRG 0x"
+                  << std::hex << static_cast<uint32_t>(SIDR0_NUMSMRG);
     SMMU_TBU_PWR_STATUS = (1u << static_cast<uint32_t>(p_num_tbu)) - 1;
     smmu500_update_global_irq();
     for (unsigned int cb = 0; cb < p_num_cb; ++cb) smmu500_update_ctx_irq(cb);
@@ -280,7 +282,6 @@ void smmu500<BUSWIDTH>::before_end_of_elaboration()
         if (!access || access.indices.size() != 1 || access.indices[0] >= p_num_cb) return;
         SMMU_CB_TLBSTATUS[access.indices[0]] = 0;
     });
-
 }
 
 template class smmu500<32>;
