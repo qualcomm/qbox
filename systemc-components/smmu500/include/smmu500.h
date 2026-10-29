@@ -1439,8 +1439,14 @@ public:
         return stream_id;
     }
 
+    /*
+     * transport_stream_address: the TBU uses the legacy convention where
+     * addr[35:32] carries CSID[3:0]. Callers with a fixed StreamID (Linux
+     * arm-smmu clients such as UFS) pass false so the full IOVA is walked.
+     * va_width: number of IOVA bits walked when the address carries no CSID.
+     */
     IOMMUTLBEntry smmu500_translate(tlm::tlm_generic_payload& txn, uint64_t sid, bool transport_stream_address = false,
-                                    bool record_fault = true)
+                                    bool record_fault = true, unsigned int va_width = 64)
     {
         std::lock_guard<std::recursive_mutex> translation_lock(m_translation_lock);
         const uint64_t trace_id = ++m_translation_seq;
@@ -1462,6 +1468,8 @@ public:
         uint64_t va = addr & ~SMMU_ADDRMASK;
         if (address_carries_csid) {
             va &= ((1ULL << SMMU_VA_WIDTH) - 1);
+        } else if (va_width < 64) {
+            va &= ((1ULL << va_width) - 1);
         }
         uint64_t pa = va;
         int prot;
@@ -1687,19 +1695,20 @@ class smmu500_tbu : public sc_core::sc_module
         const bool record_fault = flags == qemu::IOMMUMemoryRegion::IOMMU_RO ||
                                   flags == qemu::IOMMUMemoryRegion::IOMMU_WO;
         try {
-            te = m_smmu->smmu500_translate(txn, p_topology_id, true, record_fault);
+            te = m_smmu->smmu500_translate(txn, p_topology_id, p_sid_from_addr, record_fault, p_va_width);
         } catch (const typename smmu500<BUSWIDTH>::DmaDmiMiss&) {
             auto& inst = m_qemu_instance->get();
             const bool iothread_locked = inst.is_iothread_locked();
             if (iothread_locked) inst.unlock_iothread();
-            m_smmu->m_dma_on_sysc.run_on_sysc(
-                [&, record_fault] { te = m_smmu->smmu500_translate(txn, p_topology_id, true, record_fault); });
+            m_smmu->m_dma_on_sysc.run_on_sysc([&, record_fault] {
+                te = m_smmu->smmu500_translate(txn, p_topology_id, p_sid_from_addr, record_fault, p_va_width);
+            });
             if (iothread_locked) inst.lock_iothread();
         }
         if (te.perm == smmu500<BUSWIDTH>::IOMMU_NONE) return;
         const uint64_t pa = (te.translated_addr & ~te.addr_mask) | (iova & te.addr_mask);
         uint64_t mask = te.addr_mask;
-        const bool transport_csid = (iova >> 36) == 0;
+        const bool transport_csid = p_sid_from_addr && (iova >> 36) == 0;
         const uint64_t csid_window_mask = static_cast<uint64_t>(UINT32_MAX);
         const uint64_t csid_window_end = (iova & ~csid_window_mask) | csid_window_mask;
         while ((addr & mask) != (pa & mask) || (addr | mask) >= region.size ||
@@ -1814,7 +1823,8 @@ protected:
             SCP_INFO(()) << std::hex << "TBU high-VA b_transport address 0x" << addr << " topology ID 0x"
                          << static_cast<uint32_t>(p_topology_id);
         }
-        typename smmu500<BUSWIDTH>::IOMMUTLBEntry te = m_smmu->smmu500_translate(txn, p_topology_id, true);
+        typename smmu500<BUSWIDTH>::IOMMUTLBEntry te = m_smmu->smmu500_translate(txn, p_topology_id, p_sid_from_addr,
+                                                                                 true, p_va_width);
         if (high_va) {
             SCP_INFO(()) << std::hex << "TBU high-VA b_transport result PA 0x" << te.translated_addr << " mask 0x"
                          << te.addr_mask << " permissions " << te.perm;
@@ -1837,7 +1847,8 @@ protected:
     virtual unsigned int transport_dbg(tlm::tlm_generic_payload& txn)
     {
         sc_dt::uint64 addr = txn.get_address();
-        typename smmu500<BUSWIDTH>::IOMMUTLBEntry te = m_smmu->smmu500_translate(txn, p_topology_id, true, false);
+        typename smmu500<BUSWIDTH>::IOMMUTLBEntry te = m_smmu->smmu500_translate(txn, p_topology_id, p_sid_from_addr,
+                                                                                 false, p_va_width);
         if (te.perm == smmu500<BUSWIDTH>::IOMMU_NONE) {
             return 0;
         }
@@ -1879,7 +1890,8 @@ protected:
             SCP_INFO(()) << std::hex << "TBU high-VA DMI request address 0x" << VIRT.address << " topology ID 0x"
                          << static_cast<uint32_t>(p_topology_id);
         }
-        typename smmu500<BUSWIDTH>::IOMMUTLBEntry te = m_smmu->smmu500_translate(txn, p_topology_id, true, false);
+        typename smmu500<BUSWIDTH>::IOMMUTLBEntry te = m_smmu->smmu500_translate(txn, p_topology_id, p_sid_from_addr,
+                                                                                 false, p_va_width);
         if (high_va) {
             SCP_INFO(()) << std::hex << "TBU high-VA DMI result PA 0x" << te.translated_addr << " mask 0x"
                          << te.addr_mask << " permissions " << te.perm;
@@ -1887,7 +1899,7 @@ protected:
 
         if (te.perm == smmu500<BUSWIDTH>::IOMMU_NONE) {
             int CB = -1;
-            const bool address_carries_csid = (VIRT.address >> 36) == 0;
+            const bool address_carries_csid = p_sid_from_addr && (VIRT.address >> 36) == 0;
             m_smmu->smmu500_resolve_stream_id(p_topology_id, VIRT.address, &CB, nullptr, nullptr, address_carries_csid);
             if (CB >= 0 && static_cast<unsigned int>(CB) < SMMU_MAX_CB) {
                 const uint64_t page = VIRT.address & ~SMMU_PAGEMASK;
@@ -1910,6 +1922,17 @@ protected:
             }
             if (reinterpret_cast<uintptr_t>(dmi_data.get_dmi_ptr()) < 4096) {
                 return false;
+            }
+            if (!p_sid_from_addr) {
+                /* Bypass with a fixed StreamID: identity over the whole range */
+                if (!bypass_dmi_range_valid || bypass_dmi_range.first > dmi_data.get_start_address()) {
+                    bypass_dmi_range.first = dmi_data.get_start_address();
+                }
+                if (!bypass_dmi_range_valid || bypass_dmi_range.second < dmi_data.get_end_address()) {
+                    bypass_dmi_range.second = dmi_data.get_end_address();
+                }
+                bypass_dmi_range_valid = true;
+                return ret;
             }
             VIRT.page_end = dmi_data.get_end_address();
             if (VIRT.page_end >> TRANSPORT_IOVA_WIDTH != VIRT.address >> TRANSPORT_IOVA_WIDTH) {
@@ -1975,7 +1998,7 @@ protected:
         }
 
         int CB = -1;
-        const bool address_carries_csid = (VIRT.address >> 36) == 0;
+        const bool address_carries_csid = p_sid_from_addr && (VIRT.address >> 36) == 0;
         txn.set_address(VIRT.address);
         m_smmu->smmu500_resolve_stream_id(p_topology_id, VIRT.address, &CB, nullptr, nullptr, address_carries_csid);
         if (CB < 0) {
@@ -2008,6 +2031,8 @@ protected:
 
 public:
     cci::cci_param<uint32_t> p_topology_id;
+    cci::cci_param<uint32_t> p_va_width;
+    cci::cci_param<bool> p_sid_from_addr;
 
     tlm_utils::simple_target_socket<smmu500_tbu> upstream_socket;
 #ifndef WITHOUT_QEMU
@@ -2029,6 +2054,10 @@ public:
                 )
         : m_broker(cci::cci_get_broker())
         , p_topology_id("topology_id", 0x0, "Topology ID for this TBU")
+        , p_va_width("va_width", 64,
+                     "IOVA bits walked when the address carries no CSID (sid_from_addr=false or high VA)")
+        , p_sid_from_addr("sid_from_addr", true,
+                          "Legacy convention: addr[35:32] carries CSID[3:0]. Set false for a fixed StreamID")
         , upstream_socket("upstream_socket")
 #ifndef WITHOUT_QEMU
         , downstream_socket("downstream_socket", qemu_instance)
