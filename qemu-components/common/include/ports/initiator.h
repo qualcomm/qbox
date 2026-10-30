@@ -349,6 +349,12 @@ public:
     {
     }
 
+    void set_qemu_inst(QemuInstance& inst)
+    {
+        m_instance_hint = std::make_unique<QemuInstanceHintTlmExtension>(inst);
+        m_inst = &inst;
+    }
+
     void set_cpu(qemu::Cpu cpu)
     {
         if (!m_cpu.valid()) m_cpu = cpu;
