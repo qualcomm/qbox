@@ -1710,9 +1710,13 @@ class smmu500_tbu : public sc_core::sc_module
     {
         const uint64_t iova = txn.get_address();
         const auto* origin = txn.get_extension<QemuInstanceHintTlmExtension>();
-        if (!origin) return;
+        if (!origin || !origin->instance) return;
 
-        if (m_qemu_instance == nullptr || origin->instance != m_qemu_instance) {
+        if (m_qemu_instance == nullptr) {
+            downstream_socket.set_qemu_inst(*origin->instance);
+            m_qemu_instance = origin->instance;
+        }
+        if (origin->instance != m_qemu_instance) {
             SCP_WARN(()) << "Cannot replace QEMU MR hint from a different QEMU instance";
             return;
         }
