@@ -185,7 +185,7 @@ public:
         , m_router("router")
         , m_memory("memory", FIRMWARE_SIZE)
         , m_smmu("smmu")
-        , m_tbu("tbu", &m_smmu, m_instance)
+        , m_tbu("tbu", &m_smmu)
         , m_completion_guard("completion_guard")
         , m_completion_target("completion_target", m_completion_event)
     {
@@ -319,7 +319,10 @@ private:
 
         auto* mr_hint = txn.get_extension<QemuMrHintTlmExtension>();
         TEST_ASSERT(mr_hint != nullptr);
-        TEST_ASSERT(mr_hint->get_mr().get_size() == IOVA_WINDOW_SIZE);
+        auto hint_mr = mr_hint->get_mr();
+        TEST_ASSERT(hint_mr.valid());
+        TEST_ASSERT(&hint_mr.get_inst() == &m_instance.get());
+        TEST_ASSERT(hint_mr.get_size() == IOVA_WINDOW_SIZE);
         TEST_ASSERT(mr_hint->get_offset() == 0);
         tlm::tlm_dmi dmi;
         TEST_ASSERT(!m_tbu.get_direct_mem_ptr(txn, dmi));
