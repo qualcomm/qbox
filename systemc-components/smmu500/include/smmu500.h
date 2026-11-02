@@ -1666,13 +1666,16 @@ class smmu500_tbu : public sc_core::sc_module
                                                                       : tlm::TLM_READ_COMMAND);
         QemuMemTxAttrExtensions attrs(txn, region.mr->attrs_for_index(idx));
         typename smmu500<BUSWIDTH>::IOMMUTLBEntry te{};
+        const bool record_fault = flags == qemu::IOMMUMemoryRegion::IOMMU_RO ||
+                                  flags == qemu::IOMMUMemoryRegion::IOMMU_WO;
         try {
-            te = m_smmu->smmu500_translate(txn, p_topology_id, true, false);
+            te = m_smmu->smmu500_translate(txn, p_topology_id, true, record_fault);
         } catch (const typename smmu500<BUSWIDTH>::DmaDmiMiss&) {
             auto& inst = m_qemu_instance->get();
             const bool iothread_locked = inst.is_iothread_locked();
             if (iothread_locked) inst.unlock_iothread();
-            m_smmu->m_dma_on_sysc.run_on_sysc([&] { te = m_smmu->smmu500_translate(txn, p_topology_id, true, false); });
+            m_smmu->m_dma_on_sysc.run_on_sysc(
+                [&, record_fault] { te = m_smmu->smmu500_translate(txn, p_topology_id, true, record_fault); });
             if (iothread_locked) inst.lock_iothread();
         }
         if (te.perm == smmu500<BUSWIDTH>::IOMMU_NONE) return;
