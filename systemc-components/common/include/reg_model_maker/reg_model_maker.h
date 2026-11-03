@@ -26,7 +26,6 @@
 #include <vector>
 #include <limits>
 #include <map>
-#include <list>
 #include <algorithm>
 
 namespace gs {
