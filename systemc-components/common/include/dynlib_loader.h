@@ -10,8 +10,10 @@
 
 #include <memory>
 #include <string>
+#include <filesystem>
 
 namespace qemu {
+
 class LibraryIface
 {
 public:
@@ -33,5 +35,6 @@ public:
 };
 
 LibraryLoaderIface& get_default_lib_loader();
+std::filesystem::path resolve_library_path(const std::string& name);
 
 } // namespace qemu

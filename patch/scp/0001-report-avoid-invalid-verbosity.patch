@@ -1,0 +1,122 @@
+diff --git a/report/include/scp/report.h b/report/include/scp/report.h
+index 1335c9f..9792b1e 100644
+--- a/report/include/scp/report.h
++++ b/report/include/scp/report.h
+@@ -18,6 +18,7 @@
+ #define _SCP_REPORT_H_
+ 
+ #include <cstring>
++#include <climits>
+ #include <iomanip>
+ #include <iostream>
+ #include <sstream>
+@@ -45,10 +46,6 @@
+ // we need to #undef it to avoid a collision with log:ERROR.
+ #undef ERROR
+ 
+-namespace sc_core {
+-const sc_core::sc_verbosity SC_UNSET = (sc_core::sc_verbosity)INT_MAX;
+-}
+-
+ //! the name of the CCI property to attach to modules to control logging of
+ //! this module
+ #define SCP_LOG_LEVEL_PARAM_NAME "log_level"
+@@ -204,7 +201,7 @@ struct LogConfig {
+  *
+  */
+ struct scp_logger_cache {
+-    sc_core::sc_verbosity level = sc_core::SC_UNSET;
++    int level = INT_MAX;
+     std::string type;
+     std::vector<std::string> features;
+ 
+@@ -492,7 +489,7 @@ protected:
+ #define SCP_LOGGER(...)                                                 \
+     scp::scp_logger_cache IIF(IS_PAREN(FIRST_ARG(__VA_ARGS__)))(        \
+         SCP_LOGGER_NAME(EXPAND(FIRST_ARG FIRST_ARG(__VA_ARGS__))),      \
+-        SCP_LOGGER_NAME()) = { sc_core::SC_UNSET,                       \
++        SCP_LOGGER_NAME()) = { INT_MAX,                                 \
+                                "",                                      \
+                                { IIF(IS_PAREN(FIRST_ARG(__VA_ARGS__)))( \
+                                    POP_ARG(__VA_ARGS__), ##__VA_ARGS__) } }
+@@ -501,7 +498,7 @@ protected:
+     std::vector<scp::scp_logger_cache> SCP_LOGGER_NAME(NAME)
+ #define SCP_LOGGER_VECTOR_PUSH_BACK(NAME, ...) \
+     SCP_LOGGER_NAME(NAME).push_back(           \
+-        { sc_core::SC_UNSET, "", { __VA_ARGS__ } });
++        { INT_MAX, "", { __VA_ARGS__ } });
+ 
+ class call_sc_name_fn
+ {
+diff --git a/report/src/report.cpp b/report/src/report.cpp
+index 0db5d50..73c8022 100644
+--- a/report/src/report.cpp
++++ b/report/src/report.cpp
+@@ -587,24 +587,24 @@ std::vector<std::string> scp::get_logging_parameters() {
+                                     logging_parameters.end());
+ }
+ 
+-sc_core::sc_verbosity cci_lookup(cci::cci_broker_handle broker,
+-                                 std::string name) {
++int cci_lookup(cci::cci_broker_handle broker, std::string name) {
+     auto param_name = (name.empty()) ? SCP_LOG_LEVEL_PARAM_NAME
+                                      : name + "." SCP_LOG_LEVEL_PARAM_NAME;
+     auto h = broker.get_param_handle(param_name);
+     if (h.is_valid()) {
+-        return verbosity.at(std::min<unsigned>(h.get_cci_value().get_int(),
+-                                               verbosity.size() - 1));
++        return static_cast<int>(verbosity.at(
++            std::min<unsigned>(h.get_cci_value().get_int(),
++                               verbosity.size() - 1)));
+     } else {
+         auto val = broker.get_preset_cci_value(param_name);
+ 
+         if (val.is_int()) {
+             broker.lock_preset_value(param_name);
+-            return verbosity.at(
+-                std::min<unsigned>(val.get_int(), verbosity.size() - 1));
++            return static_cast<int>(verbosity.at(
++                std::min<unsigned>(val.get_int(), verbosity.size() - 1)));
+         }
+     }
+-    return sc_core::SC_UNSET;
++    return INT_MAX;
+ }
+ 
+ #ifdef __GNUG__
+@@ -638,8 +638,8 @@ void insert(std::multimap<int, std::string, std::greater<int>>& map,
+ 
+ sc_core::sc_verbosity scp::scp_logger_cache::get_log_verbosity_cached(
+     const char* scname, const char* tname = "") {
+-    if (level != sc_core::SC_UNSET) {
+-        return level;
++    if (level != INT_MAX) {
++        return static_cast<sc_core::sc_verbosity>(level);
+     }
+ 
+     if (!scname && features.size())
+@@ -687,10 +687,10 @@ sc_core::sc_verbosity scp::scp_logger_cache::get_log_verbosity_cached(
+         insert(allfeatures, "", false);
+ 
+         for (std::pair<int, std::string> f : allfeatures) {
+-            sc_core::sc_verbosity v = cci_lookup(broker, f.second);
+-            if (v != sc_core::SC_UNSET) {
++            int v = cci_lookup(broker, f.second);
++            if (v != INT_MAX) {
+                 level = v;
+-                return v;
++                return static_cast<sc_core::sc_verbosity>(v);
+             }
+         }
+     } catch (const std::exception&) {
+@@ -699,8 +699,8 @@ sc_core::sc_verbosity scp::scp_logger_cache::get_log_verbosity_cached(
+ 
+ #endif
+ 
+-    return level = static_cast<sc_core::sc_verbosity>(
+-               ::sc_core::sc_report_handler::get_verbosity_level());
++    return static_cast<sc_core::sc_verbosity>(
++        level = ::sc_core::sc_report_handler::get_verbosity_level());
+ }
+ 
+ auto scp::get_log_verbosity(char const* str) -> sc_core::sc_verbosity {

@@ -28,6 +28,7 @@
 
 #include <scp/report.h>
 
+#include "dynlib_loader.h"
 #include "ports/qemu-target-signal-socket.h"
 #include "mcips-plugin.h"
 #include "qemu-instance-order.h"
@@ -370,12 +371,15 @@ public:
             m_mcips_plugin = std::make_unique<McipsPlugin>("mcips_plugin", m_inst);
             /* Plugin filename per platform: meson shared_module() defaults */
 #if defined(_WIN32)
-            m_mcips_plugin->push_plugin_args("libidlinker.dll");
+            constexpr auto plugin_name = "libidlinker.dll";
 #elif defined(__APPLE__)
-            m_mcips_plugin->push_plugin_args("libidlinker.dylib");
+            constexpr auto plugin_name = "libidlinker.dylib";
 #else /* Linux */
-            m_mcips_plugin->push_plugin_args("libidlinker.so");
+            constexpr auto plugin_name = "libidlinker.so";
 #endif
+
+            const auto plugin_path = qemu::resolve_library_path(plugin_name);
+            m_mcips_plugin->push_plugin_args(plugin_path.u8string());
         }
 
         /* Last: the destructor, which unregisters, only runs for a fully constructed object */

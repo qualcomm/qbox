@@ -96,6 +96,7 @@ file(
     ${CMAKE_CURRENT_BINARY_DIR}/cmake/CPM.cmake
 )
 include(${CMAKE_CURRENT_BINARY_DIR}/cmake/CPM.cmake)
+include(${PROJECT_SOURCE_DIR}/cmake/apply-git-patches.cmake)
 include(${PROJECT_SOURCE_DIR}/cmake/boilerplate.cmake)
 
 add_library(qbox-common INTERFACE)
@@ -292,25 +293,14 @@ mark_as_advanced(LIBFDT_INCLUDE_DIR LIBFDT_LIBRARY)
 gs_addexpackage("gh:google/googletest#v1.15.2")
 gs_addexpackage("gh:lua/lua#v5.4.2")
 
-find_package(Git QUIET)
-if(NOT Git_FOUND)
-    message(FATAL_ERROR "Couldn't find git executable for rpclib patching")
-endif()
-
-set(RPCLIB_PATCH_SCRIPT
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply-git-am-patches.cmake"
-)
+qbox_git_patch_command(_rpclib_patch_command "${CMAKE_CURRENT_SOURCE_DIR}/patch/rpclib")
 
 gs_addexpackage(
     NAME rpclib
     GIT_REPOSITORY https://github.com/rpclib/rpclib.git
     GIT_TAG v2.3.0
     GIT_SHALLOW TRUE
-    PATCH_COMMAND
-        "${CMAKE_COMMAND}"
-        "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
-        "-DPATCH_DIR=${CMAKE_CURRENT_SOURCE_DIR}/patch/rpclib"
-        -P "${RPCLIB_PATCH_SCRIPT}"
+    PATCH_COMMAND ${_rpclib_patch_command}
     UPDATE_DISCONNECTED 1
 )
 
