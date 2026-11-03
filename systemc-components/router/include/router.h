@@ -126,7 +126,7 @@ class router : public sc_core::sc_module, public gs::router_if<BUSWIDTH>
      * This implementation provides O(log n) address lookups using a single std::map with automatic
      * region splitting to handle overlapping memory regions. When overlapping regions are added,
      * the map automatically splits them into non-overlapping segments and resolves conflicts
-     * based on priority (lower numeric value = higher priority).
+     * based on priority (higher numeric value = higher priority).
      *
      * Key features:
      * - Single unified map instead of multiple priority-based maps
@@ -167,7 +167,7 @@ class router : public sc_core::sc_module, public gs::router_if<BUSWIDTH>
          * 1. Finding all existing regions that overlap with the new region
          * 2. Creating a unified list of all intervals (new + existing)
          * 3. Using boundary-based segmentation to split overlapping areas
-         * 4. Resolving conflicts by priority (lower number = higher priority)
+         * 4. Resolving conflicts by priority (higher number = higher priority)
          * 5. Creating non-overlapping regions in the final map
          *
          * Time complexity: O(k log k) where k is the number of overlapping regions
@@ -200,7 +200,7 @@ class router : public sc_core::sc_module, public gs::router_if<BUSWIDTH>
             struct Interval {
                 uint64_t start, end;
                 std::shared_ptr<TargetInfoType> target;
-                uint32_t priority;
+                int priority;
 
                 Interval(uint64_t s, uint64_t e, std::shared_ptr<TargetInfoType> t)
                     : start(s), end(e), target(t), priority(t->priority)
@@ -236,12 +236,12 @@ class router : public sc_core::sc_module, public gs::router_if<BUSWIDTH>
 
                 // Find the highest priority target for this segment
                 std::shared_ptr<TargetInfoType> best_target = nullptr;
-                uint32_t best_priority = UINT32_MAX;
+                int best_priority = 0;
 
                 for (const Interval& interval : intervals) {
                     // Check if this interval covers the current segment
                     if (interval.start <= seg_start && interval.end >= seg_end) {
-                        if (interval.priority < best_priority) {
+                        if (!best_target || interval.priority > best_priority) {
                             best_priority = interval.priority;
                             best_target = interval.target;
                         }
@@ -978,7 +978,7 @@ private:
             ti_ptr->size = gs::cci_get<uint64_t>(m_broker, name + ".size");
             ti_ptr->use_offset = gs::cci_get_d<bool>(m_broker, name + ".relative_addresses", true);
             ti_ptr->chained = gs::cci_get_d<bool>(m_broker, name + ".chained", false);
-            ti_ptr->priority = gs::cci_get_d<uint32_t>(m_broker, name + ".priority", 0);
+            ti_ptr->priority = gs::cci_get_d<int>(m_broker, name + ".priority", 0);
 
             SCP_INFO((D[ti_ptr->index]), ti_ptr->name)
                 << "Address map " << ti_ptr->name << " at address " << "0x" << std::hex << ti_ptr->address << " size "
@@ -1067,10 +1067,9 @@ public:
      * @param address The base address of the target.
      * @param size The size of the target's address range.
      * @param masked Boolean indicating if relative addresses should be used (defaults to true).
-     * @param priority unsigned int priority, lower values have higher priorities
+     * @param priority signed priority; positive values are stronger than baseline zero
      */
-    void add_target(TargetSocket& t, const uint64_t address, uint64_t size, bool masked = true,
-                    unsigned int priority = 0)
+    void add_target(TargetSocket& t, const uint64_t address, uint64_t size, bool masked = true, int priority = 0)
     {
         std::string s = gs::router_if<BUSWIDTH>::nameFromSocket(t.get_base_export().name());
         if (!m_broker.has_preset_value(s + ".address")) {

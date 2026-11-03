@@ -14,13 +14,17 @@
 #include <tlm_utils/simple_initiator_socket.h>
 #include <tlm_utils/multi_passthrough_target_socket.h>
 
-#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
+#include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace gs {
 
@@ -107,15 +111,64 @@ class register_model : public sc_core::sc_module
 public:
     using target_socket_type = tlm_utils::multi_passthrough_target_socket_optional<register_model,
                                                                                    DEFAULT_TLM_BUSWIDTH>;
+    using module_address_map = std::map<std::uint64_t, std::pair<std::uint64_t, std::string>>;
+    using access_callback = std::function<void(bool, std::uint64_t)>;
+
+    class target_socket_bridge
+        : public tlm_utils::multi_passthrough_target_socket<target_socket_bridge, DEFAULT_TLM_BUSWIDTH>
+    {
+    public:
+        explicit target_socket_bridge(const char* name)
+            : tlm_utils::multi_passthrough_target_socket<target_socket_bridge, DEFAULT_TLM_BUSWIDTH>(name)
+            , m_access((std::string(name) + "_access").c_str())
+        {
+            this->register_b_transport(this, &target_socket_bridge::b_transport);
+            this->register_transport_dbg(this, &target_socket_bridge::transport_dbg);
+            this->register_get_direct_mem_ptr(this, &target_socket_bridge::get_direct_mem_ptr);
+            m_access.register_invalidate_direct_mem_ptr(this, &target_socket_bridge::invalidate_direct_mem_ptr);
+        }
+
+        template <typename Socket>
+        void forward_to(Socket& socket)
+        {
+            m_access.bind(socket);
+        }
+
+    private:
+        void b_transport(int, tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
+        {
+            m_access->b_transport(trans, delay);
+        }
+
+        unsigned int transport_dbg(int, tlm::tlm_generic_payload& trans) { return m_access->transport_dbg(trans); }
+
+        bool get_direct_mem_ptr(int, tlm::tlm_generic_payload& trans, tlm::tlm_dmi& dmi)
+        {
+            return m_access->get_direct_mem_ptr(trans, dmi);
+        }
+
+        void invalidate_direct_mem_ptr(sc_dt::uint64 start, sc_dt::uint64 end)
+        {
+            for (unsigned int index = 0; index < this->size(); ++index)
+                (*this)[index]->invalidate_direct_mem_ptr(start, end);
+        }
+
+        tlm_utils::simple_initiator_socket<target_socket_bridge> m_access;
+    };
 
     register_model(sc_core::sc_module_name name, gs_memory<>& memory, std::uint64_t base, std::uint64_t size,
-                   bool relative_addresses = true)
+                   bool relative_addresses = true, const module_address_map& modules = {},
+                   const access_callback& before_access = {}, int priority = 0, bool lazy_init = false,
+                   std::optional<std::uint64_t> mapped_address = {})
         : sc_core::sc_module(name)
         , m_target("target_socket")
-        , m_router("router")
+        , m_router("router", modules, before_access)
         , m_access("access")
-        , m_base(configure_frontend(m_target.name(), base, size, relative_addresses))
+        , m_reset("reset")
+        , m_base(configure_frontend(m_target.name(), base, size, relative_addresses, priority,
+                                    mapped_address.value_or(base)))
         , m_size(size)
+        , m_mapped_address(mapped_address.value_or(base))
         , m_relative_addresses(relative_addresses)
         , m_bindings(m_router, memory)
     {
@@ -124,21 +177,21 @@ public:
         m_target.register_get_direct_mem_ptr(this, &register_model::socket_get_direct_mem_ptr);
 
         m_access.bind(m_router.target_socket);
+        m_reset.bind(memory.reset);
+        if (lazy_init) m_router.lazy_init = true;
     }
 
     target_socket_type& target_socket() { return m_target; }
+
+    void reset(bool asserted) { m_reset->write(asserted); }
 
     void b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
     {
         trans.set_dmi_allowed(false);
         if (!valid_address(trans)) return;
-        if (!m_relative_addresses) {
-            m_access->b_transport(trans, delay);
-            trans.set_dmi_allowed(false);
-            return;
-        }
         address_guard guard{ trans, trans.get_address() };
-        trans.set_address(m_base + trans.get_address());
+        trans.set_address(m_base +
+                          (m_relative_addresses ? trans.get_address() : trans.get_address() - m_mapped_address));
         m_access->b_transport(trans, delay);
         trans.set_dmi_allowed(false);
     }
@@ -146,40 +199,67 @@ public:
     unsigned int transport_dbg(tlm::tlm_generic_payload& trans)
     {
         if (!valid_address(trans)) return 0;
-        if (!m_relative_addresses) return m_access->transport_dbg(trans);
         address_guard guard{ trans, trans.get_address() };
-        trans.set_address(m_base + trans.get_address());
+        trans.set_address(m_base +
+                          (m_relative_addresses ? trans.get_address() : trans.get_address() - m_mapped_address));
         return m_access->transport_dbg(trans);
     }
 
     bool get_direct_mem_ptr(tlm::tlm_generic_payload&, tlm::tlm_dmi&) { return false; }
 
-protected:
     template <typename T>
-    void bind_register(gs_register<T>& reg)
+    void bind_register(gs_register<T>& reg, int priority = 0)
+    {
+        bind_register_at(reg, m_base, priority);
+    }
+
+    template <typename T>
+    void bind_register_at(gs_register<T>& reg, std::uint64_t base, int priority = 0)
     {
         const auto offset = reg.get_offset();
         const auto span = reg.get_size();
-        if (span == 0 || offset >= m_size || span > m_size - offset) {
+        if (base < m_base || base - m_base >= m_size || span == 0 || offset >= m_size - (base - m_base) ||
+            span > m_size - (base - m_base) - offset) {
             throw std::invalid_argument(std::string(reg.p_offset.name()) + ": register lies outside model aperture");
         }
         m_bindings.bind_at(reg, base, priority);
     }
 
+    class binding_group
+    {
+    public:
+        explicit binding_group(register_model& model): m_model(model) {}
+
+        template <typename T>
+        void bind_at(gs_register<T>& reg, std::uint64_t base, int priority = 0)
+        {
+            m_model.bind_register_at(reg, base, priority);
+            ++m_count;
+        }
+
+        std::size_t size() const { return m_count; }
+
+    private:
+        register_model& m_model;
+        std::size_t m_count = 0;
+    };
+
 private:
     static std::uint64_t configure_frontend(const std::string& socket, std::uint64_t base, std::uint64_t size,
-                                            bool relative_addresses)
+                                            bool relative_addresses, int priority, std::uint64_t mapped_address)
     {
-        if (size && base > std::numeric_limits<std::uint64_t>::max() - (size - 1)) {
+        if (size && (base > std::numeric_limits<std::uint64_t>::max() - (size - 1) ||
+                     mapped_address > std::numeric_limits<std::uint64_t>::max() - (size - 1))) {
             throw std::invalid_argument("register model aperture overflows address space");
         }
 
         auto broker = cci::cci_get_broker();
-        const std::array<std::pair<std::string, cci::cci_value>, 3> metadata{ {
-            { socket + ".address", cci::cci_value(base) },
+        std::vector<std::pair<std::string, cci::cci_value>> metadata{
+            { socket + ".address", cci::cci_value(mapped_address) },
             { socket + ".size", cci::cci_value(size) },
             { socket + ".relative_addresses", cci::cci_value(relative_addresses) },
-        } };
+        };
+        if (priority != 0) metadata.emplace_back(socket + ".priority", cci::cci_value(priority));
 
         for (const auto& entry : metadata) {
             if (broker.has_preset_value(entry.first) && !(broker.get_preset_cci_value(entry.first) == entry.second)) {
@@ -205,11 +285,11 @@ private:
     bool valid_address(tlm::tlm_generic_payload& trans) const
     {
         const auto address = trans.get_address();
-        if (!m_relative_addresses && address < m_base) {
+        if (!m_relative_addresses && address < m_mapped_address) {
             trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
             return false;
         }
-        const auto offset = m_relative_addresses ? address : address - m_base;
+        const auto offset = m_relative_addresses ? address : address - m_mapped_address;
         if (offset >= m_size || trans.get_data_length() > m_size - offset) {
             trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
             return false;
@@ -232,8 +312,10 @@ private:
     target_socket_type m_target;
     reg_router<> m_router;
     tlm_utils::simple_initiator_socket<register_model> m_access;
+    InitiatorSignalSocket<bool> m_reset;
     const std::uint64_t m_base;
     const std::uint64_t m_size;
+    const std::uint64_t m_mapped_address;
     const bool m_relative_addresses;
     register_bindings m_bindings;
 };

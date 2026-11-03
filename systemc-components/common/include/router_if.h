@@ -52,7 +52,7 @@ public:
         std::string name;
         sc_dt::uint64 address;
         sc_dt::uint64 size;
-        uint32_t priority;
+        int priority;
         bool use_offset;
         bool is_callback;
         bool chained;

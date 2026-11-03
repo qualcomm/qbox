@@ -211,8 +211,8 @@ public:
     }
 #endif
 
-    // Priority semantics match router.h: lower numeric value = higher priority
-    // (0 is strongest, default when unset). Callbacks fan out to all peers at
+    // Priority semantics match router.h: higher numeric value = higher priority
+    // (0 is the baseline, default when unset). Callbacks fan out to all peers at
     // the strongest priority; equal-priority mem targets are a fatal collision.
     bool do_callbacks(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
     {
@@ -223,11 +223,11 @@ public:
         sc_dt::uint64 addr = trans.get_address();
 
         std::vector<std::shared_ptr<target_info>> claimants;
-        uint32_t best_prio = 0;
+        int best_prio = 0;
         for (auto& kv : cb_targets) {
             const auto& cand = kv.second;
             if (!cand->claims(addr)) continue;
-            if (claimants.empty() || cand->priority < best_prio) {
+            if (claimants.empty() || cand->priority > best_prio) {
                 claimants.clear();
                 claimants.push_back(cand);
                 best_prio = cand->priority;
@@ -263,7 +263,7 @@ public:
         std::shared_ptr<target_info> best;
         for (auto& ti : mem_targets) {
             if (!ti->claims(addr)) continue;
-            if (!best || ti->priority < best->priority)
+            if (!best || ti->priority > best->priority)
                 best = ti;
             else if (ti->priority == best->priority && ti != best)
                 SCP_FATAL(()) << "Two targets with equal priority both claim address 0x" << std::hex << addr;
@@ -329,7 +329,7 @@ protected:
             ti_ptr->size = gs::cci_get<uint64_t>(m_broker, name + ".size");
             ti_ptr->use_offset = gs::cci_get_d<bool>(m_broker, name + ".relative_addresses", true);
             ti_ptr->is_callback = gs::cci_get_d<bool>(m_broker, name + ".is_callback", false);
-            ti_ptr->priority = gs::cci_get_d<uint32_t>(m_broker, name + ".priority", 0);
+            ti_ptr->priority = gs::cci_get_d<int>(m_broker, name + ".priority", 0);
             ti_ptr->stride = gs::cci_get_d<uint64_t>(m_broker, name + ".stride", 0);
             ti_ptr->elem_size = gs::cci_get_d<uint64_t>(m_broker, name + ".elem_size", 0);
 
