@@ -56,6 +56,35 @@ void global_set_cci_param(char* key, uint64_t val)
 
 namespace fs = std::filesystem;
 
+static fs::path get_library_dir()
+{
+#if defined(_WIN32)
+    HMODULE module;
+    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCSTR>(&global_set_cci_param), &module)) {
+        return {};
+    }
+    char path[MAX_PATH];
+    DWORD length = GetModuleFileNameA(module, path, sizeof(path));
+    if (length == 0 || length == sizeof(path)) return {};
+    return fs::path(path).parent_path();
+#else
+    Dl_info info;
+    if (dladdr(reinterpret_cast<void*>(&global_set_cci_param), &info) == 0) return {};
+    return fs::path(info.dli_fname).parent_path();
+#endif
+}
+
+static fs::path resolve_library_path(const std::string& lib_name)
+{
+    fs::path path(lib_name);
+    if (path.has_parent_path()) return path;
+
+    const fs::path candidate = get_library_dir() / path;
+    if (fs::exists(candidate)) return candidate;
+    return path;
+}
+
 #if defined(_WIN32)
 /**
  * Gets the path to the dll_cleanup_helper executable.
@@ -108,8 +137,8 @@ static bool spawn_cleanup_process(const fs::path& dll_path)
 
     // Build the command line: dll_cleanup_helper.exe <handle> <dll_path>
     std::ostringstream cmd;
-    cmd << "\"" << helper_path.string() << "\" " << reinterpret_cast<uintptr_t>(inheritable_handle) << " "
-        << "\"" << dll_path.string() << "\"";
+    cmd << "\"" << helper_path.string() << "\" " << reinterpret_cast<uintptr_t>(inheritable_handle) << " " << "\""
+        << dll_path.string() << "\"";
 
     std::string cmd_str = cmd.str();
 
@@ -220,10 +249,11 @@ private:
     void* load_library_internal(const std::string& lib_name)
     {
         void* handle = nullptr;
+        const std::string path = resolve_library_path(lib_name).string();
 #if defined(_WIN32)
-        handle = LoadLibraryExA(lib_name.c_str(), NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+        handle = LoadLibraryExA(path.c_str(), NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
 #else
-        handle = dlopen(lib_name.c_str(), RTLD_NOW);
+        handle = dlopen(path.c_str(), RTLD_NOW);
         if (handle == nullptr) {
             m_last_error = "load_library_internal: Library " + lib_name + " is not loaded (" + dlerror() + ").";
         }
@@ -350,15 +380,17 @@ private:
 public:
     qemu::LibraryLoaderIface::LibraryIfacePtr load_library(const std::string& lib_name, bool load_as_separate_instance)
     {
+        const std::string path = resolve_library_path(lib_name).string();
+
         // If a separate instance of the shared library is requested and the library has been already loaded
         // the library must be copied into a new location and loaded from there.
-        if (load_as_separate_instance && is_library_loaded(lib_name)) {
-            std::cout << "Loading separate instance of library: " << lib_name << std::endl;
-            return duplicate_and_load_library(lib_name);
+        if (load_as_separate_instance && is_library_loaded(path)) {
+            std::cout << "Loading separate instance of library: " << path << std::endl;
+            return duplicate_and_load_library(path);
         }
 
         // Load the library
-        void* handle = load_library_internal(lib_name);
+        void* handle = load_library_internal(path);
         if (handle == nullptr) {
             m_last_error = get_last_error();
             return nullptr;

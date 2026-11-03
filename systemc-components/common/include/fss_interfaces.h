@@ -53,8 +53,8 @@ typedef void* fssBusIfItemData;
  *
  * FIXME: more descriptive error codes may be introduced!
  */
-fssRetStatus fssStatusOk = 0;
-fssRetStatus fssStatusError = -1;
+#define fssStatusOk    ((fssRetStatus)0)
+#define fssStatusError ((fssRetStatus) - 1)
 
 /**
  * @brief Time window struct declaration

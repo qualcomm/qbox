@@ -61,11 +61,14 @@ macro(install_systemc_dependencies)
     )
 
     if(NOT GS_ONLY)
+        set(_scp_patch_dir "${PROJECT_SOURCE_DIR}/patch/scp")
+        qbox_git_patch_command(_scp_patch_command "${_scp_patch_dir}")
         qbox_add_locked_package(
             SCP
             SCP
             SCP
         GIT_SHALLOW OFF
+        PATCH_COMMAND ${_scp_patch_command}
     )
     endif()
 endmacro()
@@ -103,7 +106,8 @@ endmacro()
 # ##############################################################################
 
 macro(gs_create_dymod MODULE_NAME)
-  file(GLOB_RECURSE SOURCE_COMPONENT "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc")
+  file(GLOB_RECURSE SOURCE_COMPONENT CONFIGURE_DEPENDS
+       "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc")
 
   add_library(${MODULE_NAME} SHARED
               ${SOURCE_COMPONENT})

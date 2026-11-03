@@ -37,49 +37,55 @@ const char* get_target_name(Target t)
 }
 
 #ifndef LIBQEMU_TARGET_aarch64_LIBRARY
-#define LIBQEMU_TARGET_aarch64_LIBRARY nullptr
+#define LIBQEMU_TARGET_aarch64_LIBRARY ""
 #endif
 
 #ifndef LIBQEMU_TARGET_riscv64_LIBRARY
-#define LIBQEMU_TARGET_riscv64_LIBRARY nullptr
+#define LIBQEMU_TARGET_riscv64_LIBRARY ""
 #endif
 
 #ifndef LIBQEMU_TARGET_riscv32_LIBRARY
-#define LIBQEMU_TARGET_riscv32_LIBRARY nullptr
+#define LIBQEMU_TARGET_riscv32_LIBRARY ""
 #endif
 
 #ifndef LIBQEMU_TARGET_microblaze_LIBRARY
-#define LIBQEMU_TARGET_microblaze_LIBRARY nullptr
+#define LIBQEMU_TARGET_microblaze_LIBRARY ""
 #endif
 
 #ifndef LIBQEMU_TARGET_microblazeel_LIBRARY
-#define LIBQEMU_TARGET_microblazeel_LIBRARY nullptr
+#define LIBQEMU_TARGET_microblazeel_LIBRARY ""
 #endif
 
 #ifndef LIBQEMU_TARGET_hexagon_LIBRARY
-#define LIBQEMU_TARGET_hexagon_LIBRARY nullptr
+#define LIBQEMU_TARGET_hexagon_LIBRARY ""
+#endif
+
+#ifdef LIBQEMU_LIBRARY_DIR
+#define LIBQEMU_TARGET_LIBRARY(name) ((name)[0] ? LIBQEMU_LIBRARY_DIR "/" name : nullptr)
+#else
+#define LIBQEMU_TARGET_LIBRARY(name) ((name)[0] ? name : nullptr)
 #endif
 
 const char* get_target_lib(Target t)
 {
     switch (t) {
     case AARCH64:
-        return LIBQEMU_TARGET_aarch64_LIBRARY;
+        return LIBQEMU_TARGET_LIBRARY(LIBQEMU_TARGET_aarch64_LIBRARY);
 
     case RISCV64:
-        return LIBQEMU_TARGET_riscv64_LIBRARY;
+        return LIBQEMU_TARGET_LIBRARY(LIBQEMU_TARGET_riscv64_LIBRARY);
 
     case RISCV32:
-        return LIBQEMU_TARGET_riscv32_LIBRARY;
+        return LIBQEMU_TARGET_LIBRARY(LIBQEMU_TARGET_riscv32_LIBRARY);
 
     case MICROBLAZE:
-        return LIBQEMU_TARGET_microblaze_LIBRARY;
+        return LIBQEMU_TARGET_LIBRARY(LIBQEMU_TARGET_microblaze_LIBRARY);
 
     case MICROBLAZEEL:
-        return LIBQEMU_TARGET_microblazeel_LIBRARY;
+        return LIBQEMU_TARGET_LIBRARY(LIBQEMU_TARGET_microblazeel_LIBRARY);
 
     case HEXAGON:
-        return LIBQEMU_TARGET_hexagon_LIBRARY;
+        return LIBQEMU_TARGET_LIBRARY(LIBQEMU_TARGET_hexagon_LIBRARY);
 
     default:
         return "";

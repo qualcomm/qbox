@@ -27,6 +27,8 @@ set(LOCK_SCP_TAG
   0821c329a1df363503f5ea12309cc5fa2c064530
 )
 
+qbox_git_patch_command(_scp_patch_command "${CMAKE_CURRENT_LIST_DIR}/patch/scp")
+
 CPMDeclarePackage(SCP
   NAME SCP
   GIT_TAG "${LOCK_SCP_TAG}"
@@ -35,6 +37,7 @@ CPMDeclarePackage(SCP
   # If GIT_SHALLOW is enabled then GIT_TAG works only with branch names
   # and tags. A commit hash is not allowed.
   GIT_SHALLOW OFF
+  PATCH_COMMAND ${_scp_patch_command}
 )
 
 # libqemu

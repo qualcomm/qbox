@@ -370,11 +370,11 @@ public:
             m_mcips_plugin = std::make_unique<McipsPlugin>("mcips_plugin", m_inst);
             /* Plugin filename per platform: meson shared_module() defaults */
 #if defined(_WIN32)
-            m_mcips_plugin->push_plugin_args("libidlinker.dll");
+            m_mcips_plugin->push_plugin_args(LIBQEMU_LIBRARY_DIR "/libidlinker.dll");
 #elif defined(__APPLE__)
-            m_mcips_plugin->push_plugin_args("libidlinker.dylib");
+            m_mcips_plugin->push_plugin_args(LIBQEMU_LIBRARY_DIR "/libidlinker.dylib");
 #else /* Linux */
-            m_mcips_plugin->push_plugin_args("libidlinker.so");
+            m_mcips_plugin->push_plugin_args(LIBQEMU_LIBRARY_DIR "/libidlinker.so");
 #endif
         }
 
