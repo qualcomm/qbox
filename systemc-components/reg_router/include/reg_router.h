@@ -59,6 +59,11 @@ public:
     void b_transport(int id, tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
     {
         sc_dt::uint64 addr = trans.get_address();
+        struct address_guard {
+            tlm::tlm_generic_payload& txn;
+            sc_dt::uint64 address;
+            ~address_guard() { txn.set_address(address); }
+        } guard{ trans, addr };
 
         std::shared_ptr<target_info> ti = decode_address(trans); // Use shared_ptr
 
@@ -97,6 +102,11 @@ public:
     unsigned int transport_dbg(int id, tlm::tlm_generic_payload& trans)
     {
         sc_dt::uint64 addr = trans.get_address();
+        struct address_guard {
+            tlm::tlm_generic_payload& txn;
+            const sc_dt::uint64 address;
+            ~address_guard() { txn.set_address(address); }
+        } guard{ trans, addr };
         // transport_dbg transactions should only be handled by register memory
         std::shared_ptr<target_info> ti = decode_address(trans); // Use shared_ptr
 
