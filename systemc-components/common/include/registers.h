@@ -127,53 +127,53 @@ class port_fnct : public tlm_utils::simple_target_socket<port_fnct, DEFAULT_TLM_
 
     void b_transport(tlm::tlm_generic_payload& txn, sc_core::sc_time& delay)
     {
-        if (m_pre_read_fncts.size() || m_pre_write_fncts.size() || m_post_read_fncts.size() ||
-            m_post_write_fncts.size()) {
-            if (!m_in_callback) {
-                m_in_callback = true;
-                switch (txn.get_response_status()) {
-                case tlm::TLM_INCOMPLETE_RESPONSE:
-                    switch (txn.get_command()) {
-                    case tlm::TLM_READ_COMMAND:
-                        if (m_pre_read_fncts.size()) {
-                            SCP_INFO(())("Pre-Read callbacks: {}", my_name());
-                            for (auto& cb : m_pre_read_fncts) (*cb)(txn, delay);
-                        }
-                        break;
-                    case tlm::TLM_WRITE_COMMAND:
-                        if (m_pre_write_fncts.size()) {
-                            SCP_INFO(())("Pre-Write callbacks: {}", my_name());
-                            for (auto& cb : m_pre_write_fncts) (*cb)(txn, delay);
-                        }
-                        break;
-                    default:
-                        break;
+        if (!m_in_callback) {
+            m_in_callback = true;
+            struct callback_guard {
+                bool& active;
+                ~callback_guard() { active = false; }
+            } guard{ m_in_callback };
+            switch (txn.get_response_status()) {
+            case tlm::TLM_INCOMPLETE_RESPONSE:
+                switch (txn.get_command()) {
+                case tlm::TLM_READ_COMMAND:
+                    if (m_pre_read_fncts.size()) {
+                        SCP_INFO(())("Pre-Read callbacks: {}", my_name());
+                        for (auto& cb : m_pre_read_fncts) (*cb)(txn, delay);
                     }
-                    capture_txn_pre(txn);
                     break;
-                case tlm::TLM_OK_RESPONSE:
-                    handle_mask_post(txn);
-                    switch (txn.get_command()) {
-                    case tlm::TLM_READ_COMMAND:
-                        if (m_post_read_fncts.size()) {
-                            SCP_INFO(())("Post-Read callbacks: {}", my_name());
-                            for (auto& cb : m_post_read_fncts) (*cb)(txn, delay);
-                        }
-                        break;
-                    case tlm::TLM_WRITE_COMMAND:
-                        if (m_post_write_fncts.size()) {
-                            SCP_INFO(())("Post-Write callbacks: {}", my_name());
-                            for (auto& cb : m_post_write_fncts) (*cb)(txn, delay);
-                        }
-                        break;
-                    default:
-                        break;
+                case tlm::TLM_WRITE_COMMAND:
+                    if (m_pre_write_fncts.size()) {
+                        SCP_INFO(())("Pre-Write callbacks: {}", my_name());
+                        for (auto& cb : m_pre_write_fncts) (*cb)(txn, delay);
                     }
                     break;
                 default:
                     break;
                 }
-                m_in_callback = false;
+                capture_txn_pre(txn);
+                break;
+            case tlm::TLM_OK_RESPONSE:
+                handle_mask_post(txn);
+                switch (txn.get_command()) {
+                case tlm::TLM_READ_COMMAND:
+                    if (m_post_read_fncts.size()) {
+                        SCP_INFO(())("Post-Read callbacks: {}", my_name());
+                        for (auto& cb : m_post_read_fncts) (*cb)(txn, delay);
+                    }
+                    break;
+                case tlm::TLM_WRITE_COMMAND:
+                    if (m_post_write_fncts.size()) {
+                        SCP_INFO(())("Post-Write callbacks: {}", my_name());
+                        for (auto& cb : m_post_write_fncts) (*cb)(txn, delay);
+                    }
+                    break;
+                default:
+                    break;
+                }
+                break;
+            default:
+                break;
             }
         }
         txn.set_dmi_allowed(false);
@@ -243,9 +243,16 @@ class proxy_data_array
         m_txn.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
         if (initiator_socket->get_direct_mem_ptr(m_txn, m_dmi_data)) {
             uint64_t start = m_dmi_data.get_start_address();
+            uint64_t end = m_dmi_data.get_end_address();
+            const auto offset = p_offset.get_value();
+
+            // check we are in [offset; offset + span - 1] without overflows / underflows.
+            if (span == 0 || offset < start || offset > end || span - 1 > end - offset) {
+                return;
+            }
+
             unsigned char* ptr = m_dmi_data.get_dmi_ptr();
             ptr += (p_offset - start);
-            sc_assert(m_dmi_data.get_end_address() >= start + p_offset + span);
             m_dmi = reinterpret_cast<TYPE*>(ptr);
         }
     }
@@ -559,7 +566,38 @@ class gs_register : public port_fnct, public proxy_data<TYPE>
 private:
     std::string m_regname;
     std::string m_path;
-    std::vector<unsigned char> captured_txn_data;
+    std::vector<TYPE> captured_txn_data;
+
+    uint64_t masked_element_count(const tlm::tlm_generic_payload& txn, uint64_t& index, uint64_t& lane) const
+    {
+        const auto base = proxy_data<TYPE>::p_offset.get_value();
+        const auto relative = proxy_data<TYPE>::p_relative_addresses.get_value();
+        const auto address = txn.get_address();
+
+        if (!relative && address < base) {
+            return 0;
+        }
+
+        const auto offset = relative ? address : address - base;
+        const auto stride = proxy_data<TYPE>::p_stride.get_value();
+        const auto length = txn.get_data_length();
+
+        index = offset / stride;
+        lane = offset % stride;
+
+        if (length == 0 || lane >= sizeof(TYPE) || txn.get_streaming_width() < length) {
+            return 0;
+        }
+
+        if (length > sizeof(TYPE) - lane && stride != sizeof(TYPE)) {
+            return 0;
+        }
+
+        const auto count = (lane + length + sizeof(TYPE) - 1) / sizeof(TYPE);
+        const auto number = proxy_data<TYPE>::p_number.get_value();
+
+        return index < number && count <= number - index ? count : 0;
+    }
 
 public:
     gs_register() = delete;
@@ -568,7 +606,7 @@ public:
         : m_regname(_name)
         , m_path(path)
         , port_fnct(_name, path)
-        , proxy_data<TYPE>(SCP_LOGGER_NAME(), _name, path, offset, number, mask)
+        , proxy_data<TYPE>(SCP_LOGGER_NAME(), _name, path, offset, number, 0, sizeof(TYPE) * 8, mask)
     {
         std::string n(name());
         SCP_LOGGER_NAME().features[0] = parent(n) + "." + _name;
@@ -596,7 +634,7 @@ public:
     void operator=(TYPE value) { proxy_data<TYPE>::set(value); }
     operator TYPE() { return proxy_data<TYPE>::get(); }
 
-    void operator=(gs_register<TYPE>& other) { proxy_data<TYPE>::set(proxy_data<TYPE>::get()); }
+    void operator=(gs_register<TYPE>& other) { proxy_data<TYPE>::set(static_cast<TYPE>(other)); }
     void operator+=(TYPE other) { proxy_data<TYPE>::set(proxy_data<TYPE>::get() + other); }
     void operator-=(TYPE other) { proxy_data<TYPE>::set(proxy_data<TYPE>::get() - other); }
     void operator/=(TYPE other)
@@ -635,20 +673,17 @@ public:
             (txn.get_command() != tlm::tlm_command::TLM_WRITE_COMMAND)) {
             return;
         }
-        unsigned int txn_data_len = txn.get_data_length();
-        if ((txn_data_len == 0) || (txn_data_len % sizeof(TYPE)))
-            SCP_FATAL(()) << "capture_txn_pre(): txn data length should be n * sizeof(TYPE) where n >= 1";
-        uint64_t txn_addr = txn.get_address();
-        const uint64_t stride = proxy_data<TYPE>::p_stride.get_value();
-        uint64_t idx = 0;
-        if (proxy_data<TYPE>::p_relative_addresses.get_value()) {
-            idx = txn_addr / stride;
-        } else {
-            idx = (txn_addr - proxy_data<TYPE>::p_offset.get_value()) / stride;
+        uint64_t index = 0, lane = 0;
+        const auto count = masked_element_count(txn, index, lane);
+
+        if (count == 0) {
+            captured_txn_data.clear();
+            txn.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);
+            return;
         }
-        captured_txn_data.clear();
-        captured_txn_data.resize(txn_data_len);
-        get(reinterpret_cast<TYPE*>(captured_txn_data.data()), idx, txn_data_len / sizeof(TYPE));
+
+        captured_txn_data.resize(count);
+        get(captured_txn_data.data(), index, count);
     }
     void handle_mask_post(tlm::tlm_generic_payload& txn) override
     {
@@ -656,23 +691,18 @@ public:
             (txn.get_command() != tlm::tlm_command::TLM_WRITE_COMMAND)) {
             return;
         }
-        unsigned int txn_data_len = txn.get_data_length();
-        if ((txn_data_len == 0) || (txn_data_len % sizeof(TYPE)))
-            SCP_FATAL(()) << "handle_mask_post(): txn data length should be n * sizeof(TYPE) where n >= 1";
-        uint64_t txn_addr = txn.get_address();
-        const uint64_t stride = proxy_data<TYPE>::p_stride.get_value();
-        uint64_t idx = 0;
-        if (proxy_data<TYPE>::p_relative_addresses.get_value()) {
-            idx = txn_addr / stride;
-        } else {
-            idx = (txn_addr - proxy_data<TYPE>::p_offset.get_value()) / stride;
+        uint64_t index = 0, lane = 0;
+        const auto count = masked_element_count(txn, index, lane);
+        if (count == 0 || captured_txn_data.size() != count) {
+            txn.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);
+            return;
         }
-        unsigned char* txn_data_ptr = txn.get_data_ptr();
-        proxy_data<TYPE>::write_with_mask(reinterpret_cast<TYPE*>(txn_data_ptr),
-                                          reinterpret_cast<TYPE*>(captured_txn_data.data()),
-                                          txn_data_len / sizeof(TYPE));
-        set(reinterpret_cast<TYPE*>(captured_txn_data.data()), idx, txn_data_len / sizeof(TYPE), false);
-        memcpy(txn_data_ptr, captured_txn_data.data(), txn_data_len);
+        std::vector<TYPE> incoming(count);
+        get(incoming.data(), index, count);
+        proxy_data<TYPE>::write_with_mask(incoming.data(), captured_txn_data.data(), count);
+        set(captured_txn_data.data(), index, count, false);
+        memcpy(txn.get_data_ptr(), reinterpret_cast<unsigned char*>(captured_txn_data.data()) + lane,
+               txn.get_data_length());
     }
 };
 
@@ -1183,6 +1213,12 @@ public:
         }
     }
 
+    void internal_write(const std::vector<uint64_t>& indices, ELEM value)
+    {
+        const auto flat = flat_index_for_indices(indices.data(), indices.size());
+        proxy_data_array<ELEM>::set_bytes(&value, byte_offset_for_flat(flat), false);
+    }
+
     std::string get_regname() const { return m_regname; }
     std::string get_path() const { return m_path; }
     uint64_t get_offset() const { return proxy_data_array<ELEM>::p_offset.get_value(); }
@@ -1216,6 +1252,8 @@ public:
             SCP_FATAL(())("bank {} flat index {} exceeds total count {}", m_regname, flat_index, m_total_count);
         m_element_masks.erase(flat_index);
     }
+
+    void clear_element_masks() { m_element_masks.clear(); }
 
     void set_element_mask(std::initializer_list<uint64_t> indices, ELEM mask)
     {
@@ -1298,9 +1336,11 @@ public:
 
     uint64_t masked_transaction_element_count(const tlm::tlm_generic_payload& txn, const gs_bank_access& access) const
     {
-        if (!is_element_start(access)) return 0;
         uint64_t length = txn.get_data_length();
-        if (length == 0 || length % sizeof(ELEM) != 0) return 0;
+        if (!access || length == 0 || txn.get_streaming_width() < length) return 0;
+        const auto lane = access.byte_offset - byte_offset_for_flat(access.index);
+        if (length <= sizeof(ELEM) - lane) return 1;
+        if (lane != 0 || length % sizeof(ELEM) != 0) return 0;
 
         uint64_t count = length / sizeof(ELEM);
         if (count == 1) return count;
@@ -1382,11 +1422,16 @@ public:
         for (uint64_t i = 0; i < count; i++) {
             ELEM incoming;
             ELEM stored;
-            memcpy(&incoming, txn_data_ptr + i * sizeof(ELEM), sizeof(ELEM));
+            proxy_data_array<ELEM>::get_bytes(&incoming, byte_offset_for_flat(a.index + i));
             memcpy(&stored, captured_txn_data.data() + i * sizeof(ELEM), sizeof(ELEM));
             proxy_data_array<ELEM>::write_with_mask(&incoming, &stored, 1, get_element_mask(a.index + i));
             proxy_data_array<ELEM>::set_bytes(&stored, byte_offset_for_flat(a.index + i), false);
-            memcpy(txn_data_ptr + i * sizeof(ELEM), &stored, sizeof(ELEM));
+            if (count == 1) {
+                const auto lane = a.byte_offset - byte_offset_for_flat(a.index);
+                memcpy(txn_data_ptr, reinterpret_cast<unsigned char*>(&stored) + lane, txn.get_data_length());
+            } else {
+                memcpy(txn_data_ptr + i * sizeof(ELEM), &stored, sizeof(ELEM));
+            }
         }
     }
 
