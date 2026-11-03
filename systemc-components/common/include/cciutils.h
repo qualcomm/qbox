@@ -71,10 +71,22 @@ class cci_constructor_vl : public std::function<sc_core::sc_module*(sc_core::sc_
 
     /* local 'apply' helper */
     template <typename _T, typename... U, size_t... I>
-    _T* new_t(sc_core::sc_module_name name, std::tuple<U...> tuple, std::index_sequence<I...>)
+    static _T* new_t(sc_core::sc_module_name name, std::tuple<U...> tuple, std::index_sequence<I...>)
     {
         (void)tuple; // mark tupal as used for older compilers.
         return new _T(name, std::get<I>(tuple)...);
+    }
+
+    template <typename... U>
+    static std::tuple<U...> convert_arguments(sc_core::sc_module_name name, cci::cci_value_list values)
+    {
+        int n = 0;
+        try {
+            return { values[n++].get<U>()... };
+        } catch (...) {
+            SC_REPORT_ERROR("GS CCI UTILS", ("CCI argument types dont match for module " + std::string(name)).c_str());
+            throw;
+        }
     }
 
 public:
@@ -106,21 +118,15 @@ public:
     template <typename _T, typename... U>
     cci_constructor_vl(FactoryMaker<_T, U...> fm)
         : std::function<sc_core::sc_module*(sc_core::sc_module_name name, cci::cci_value_list v)>(
-              [&](sc_core::sc_module_name name, cci::cci_value_list v) -> sc_core::sc_module* {
+              [](sc_core::sc_module_name name, cci::cci_value_list v) -> sc_core::sc_module* {
                   if (sizeof...(U) != v.size()) {
                       SC_REPORT_ERROR("GS CCI UTILS",
                                       ("Wrong number of CCI arguments for module " + std::string(name)).c_str());
+                      return nullptr;
                   }
-                  int n = 0;
-                  try {
-                      std::tuple<U...> tuple = { v[n++].get<U>()... };
-                      auto is = std::make_index_sequence<sizeof...(U)>{};
-                      return new_t<_T, U...>(name, tuple, is);
-                  } catch (...) {
-                      SC_REPORT_ERROR("GS CCI UTILS",
-                                      ("CCI argument types dont match for module " + std::string(name)).c_str());
-                  }
-                  return nullptr;
+                  auto tuple = convert_arguments<U...>(name, std::move(v));
+                  auto is = std::make_index_sequence<sizeof...(U)>{};
+                  return new_t<_T, U...>(name, std::move(tuple), is);
               })
     {
         type = fm.type;
