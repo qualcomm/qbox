@@ -346,3 +346,10 @@ function(qbox_extra_add_test target)
 endfunction(qbox_extra_add_test)
 
 add_subdirectory(display)
+
+# MCD debug server + MCP bridge tests. The mcd_server / mcd_mcp targets are only
+# built on non-Windows platforms (see systemc-components/CMakeLists.txt).
+if(NOT WIN32)
+    add_subdirectory(mcd)
+    add_subdirectory(reset-stress)
+endif()

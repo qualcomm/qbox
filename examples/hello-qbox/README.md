@@ -589,13 +589,14 @@ To list all available parameters for a platform:
 
 ## Debugging with GDB
 
-Qbox exposes a GDB server for each CPU. Set `gdb_port` on a CPU
-component, then connect with your GDB client.
+Qbox exposes one GDB server per QEMU instance. Set `gdb_port` on the instance,
+then connect with your GDB client. Every CPU of that instance appears as a GDB
+thread, so a single port debugs all of them (`info threads`).
 
 In `platform.lua`:
 
 ```lua
-platform.cpu_0 = {
+platform.qemu_inst = {
     -- ... existing config ...
     gdb_port = 4321,
 }
@@ -605,8 +606,12 @@ Or override it at runtime without editing the file:
 
 ```bash
 ./build/hello-qbox-vp --gs_luafile platform.lua \
-    --param platform.cpu_0.gdb_port=4321
+    --param platform.qemu_inst.gdb_port=4321
 ```
+
+> Setting `gdb_port` on a CPU is deprecated. It still works — the value is
+> forwarded to that CPU's instance and a warning is logged — because QEMU's GDB
+> stub state is global to an instance, so only one stub can exist per instance.
 
 Connect from another terminal:
 
