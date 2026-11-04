@@ -512,8 +512,7 @@ public:
         std::map<uint64_t, IOMMUTLBEntry> mappings;
 
         explicit TranslationContext(LibQemu& inst)
-            : root(inst.object_new_unparented<qemu::MemoryRegion>())
-            , as(inst.address_space_new())
+            : root(inst.object_new_unparented<qemu::MemoryRegion>()), as(inst.address_space_new())
         {
         }
     };
@@ -523,9 +522,9 @@ public:
     using IOMMUNumIndexesCallbackFn = std::function<int()>;
     using IOMMUIndexToAttrsCallbackFn = std::function<MemoryRegionOps::MemTxAttrs(int)>;
 
-    void init(const Object& owner, const char* name, uint64_t size, MemoryRegionOpsPtr ops,
-              IOMMUTranslateCallbackFn cb, IOMMUAttrsToIndexCallbackFn attrs_to_index_cb = {},
-              IOMMUNumIndexesCallbackFn num_indexes_cb = {}, IOMMUIndexToAttrsCallbackFn index_to_attrs_cb = {});
+    void init(const Object& owner, const char* name, uint64_t size, MemoryRegionOpsPtr ops, IOMMUTranslateCallbackFn cb,
+              IOMMUAttrsToIndexCallbackFn attrs_to_index_cb = {}, IOMMUNumIndexesCallbackFn num_indexes_cb = {},
+              IOMMUIndexToAttrsCallbackFn index_to_attrs_cb = {});
     MemoryRegionOps::MemTxAttrs attrs_for_index(int idx) const
     {
         return m_index_to_attrs_cb ? m_index_to_attrs_cb(idx) : MemoryRegionOps::MemTxAttrs{};

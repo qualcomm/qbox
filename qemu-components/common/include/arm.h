@@ -30,8 +30,7 @@ public:
     QemuCpuArm(const sc_core::sc_module_name& name, QemuInstance& inst, const std::string& type_name,
                const char* cpu_type = nullptr)
         : QemuCpu(name, inst, type_name, cpu_type)
-        , p_has_secure_memory("has_secure_memory", false,
-                              "Use a separate QEMU secure-memory address space")
+        , p_has_secure_memory("has_secure_memory", false, "Use a separate QEMU secure-memory address space")
         , secure_mem("secure_mem", *this, inst)
         , power_on("power_on")
     {

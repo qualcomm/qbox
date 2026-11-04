@@ -90,7 +90,8 @@ public:
         bool secure = false;
     };
 
-    struct DmaDmiMiss {};
+    struct DmaDmiMiss {
+    };
 
 private:
     SCP_LOGGER();

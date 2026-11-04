@@ -266,7 +266,8 @@ void IOMMUMemoryRegion::init(const Object& owner, const char* name, uint64_t siz
             *this, [attrs_to_index_cb](int* index, MemTxAttrs attrs) { *index = attrs_to_index_cb(attrs); });
     }
     if (num_indexes_cb) {
-        m_int->get_iommu_num_indexes_cb().register_cb(*this, [num_indexes_cb](int* count) { *count = num_indexes_cb(); });
+        m_int->get_iommu_num_indexes_cb().register_cb(*this,
+                                                      [num_indexes_cb](int* count) { *count = num_indexes_cb(); });
     }
     m_index_to_attrs_cb = std::move(index_to_attrs_cb);
 
