@@ -90,8 +90,7 @@ int sc_main(int argc, char* argv[])
     broker.set_preset_cci_value(default_target_socket_name + ".size",
                                 cci::cci_value(std::numeric_limits<uint64_t>::max()), originator);
     broker.set_preset_cci_value(default_target_socket_name + ".relative_addresses", cci::cci_value(true), originator);
-    broker.set_preset_cci_value(default_target_socket_name + ".priority",
-                                cci::cci_value(static_cast<unsigned int>(100)),
+    broker.set_preset_cci_value(default_target_socket_name + ".priority", cci::cci_value(-100),
                                 originator); // Lower priority
 
     // Also set for the second test bench
@@ -101,8 +100,7 @@ int sc_main(int argc, char* argv[])
     broker.set_preset_cci_value(default_target_socket_name2 + ".size",
                                 cci::cci_value(std::numeric_limits<uint64_t>::max()), originator);
     broker.set_preset_cci_value(default_target_socket_name2 + ".relative_addresses", cci::cci_value(true), originator);
-    broker.set_preset_cci_value(default_target_socket_name2 + ".priority",
-                                cci::cci_value(static_cast<unsigned int>(100)),
+    broker.set_preset_cci_value(default_target_socket_name2 + ".priority", cci::cci_value(-100),
                                 originator); // Lower priority
 
     scp::LoggingGuard logging_guard(scp::LogConfig()

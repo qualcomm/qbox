@@ -52,9 +52,10 @@ RegisterTestBench::RegisterTestBench(const sc_core::sc_module_name& n)
     : TestBench(n)
     , m_initiator("initiator")
     , m_reg_memory("reg_memory")
-    , m_reg_router("reg_router")
+    , m_register_model("register_model", m_reg_memory, REG_MEM_ADDR, REG_MEM_SZ)
     , FIFO0("FIFO0", "FIFO0", FIFO0_ADDR, FIFO0_LEN)
     , CMD0("CMD0", "CMD0", CMD0_ADDR, CMD0_LEN)
+    , LAST_WORD("LAST_WORD", "LAST_WORD", REG_MEM_SZ - sizeof(uint32_t), 1, 0xffffu)
     , CMD0_OPCODE(CMD0, CMD0.get_regname() + ".OPCODE", 27UL, 5UL)
     , CMD0_PARAM(CMD0, CMD0.get_regname() + ".PARAM", 0UL, 27UL)
     , STATUS64("STATUS64", "STATUS64", STATUS64_ADDR, STATUS64_LEN)
@@ -92,67 +93,29 @@ RegisterTestBench::RegisterTestBench(const sc_core::sc_module_name& n)
     , alias_b_hits(0)
     , bank3d_a_hits(0)
     , bank3d_b_hits(0)
-    , bank3d_a_last_rel_addr(0)
-    , bank3d_b_last_rel_addr(0)
+    , bank3d_a_last_addr(0)
+    , bank3d_b_last_addr(0)
     , lowpri_hits(0)
     , shadow_hits(0)
-    , shadow_last_rel_addr(0)
+    , shadow_last_addr(0)
 {
-    m_initiator.socket.bind(m_reg_router.target_socket);
+    m_initiator.socket.bind(m_register_model.target_socket());
 
-    m_reg_router.initiator_socket.bind(m_reg_memory.socket);
-
-    FIFO0.initiator_socket.bind(m_reg_memory.socket);
-    m_reg_router.initiator_socket.bind(FIFO0);
-    m_reg_router.rename_last(std::string(this->name()) + ".FIFO0.target_socket");
-
-    CMD0.initiator_socket.bind(m_reg_memory.socket);
-    m_reg_router.initiator_socket.bind(CMD0);
-    m_reg_router.rename_last(std::string(this->name()) + ".CMD0.target_socket");
-
-    STATUS64.initiator_socket.bind(m_reg_memory.socket);
-    m_reg_router.initiator_socket.bind(STATUS64);
-    m_reg_router.rename_last(std::string(this->name()) + ".STATUS64.target_socket");
-
-    BANK64.initiator_socket.bind(m_reg_memory.socket);
-    m_reg_router.initiator_socket.bind(BANK64);
-    m_reg_router.rename_last(std::string(this->name()) + ".BANK64.target_socket");
-
-    BANK1D.initiator_socket.bind(m_reg_memory.socket);
-    m_reg_router.initiator_socket.bind(BANK1D);
-    m_reg_router.rename_last(std::string(this->name()) + ".BANK1D.target_socket");
-
-    BANK_GAP.initiator_socket.bind(m_reg_memory.socket);
-    m_reg_router.initiator_socket.bind(BANK_GAP);
-    m_reg_router.rename_last(std::string(this->name()) + ".BANK_GAP.target_socket");
-
-    BANK2D.initiator_socket.bind(m_reg_memory.socket);
-    m_reg_router.initiator_socket.bind(BANK2D);
-    m_reg_router.rename_last(std::string(this->name()) + ".BANK2D.target_socket");
-
-    ALIAS_A.initiator_socket.bind(m_reg_memory.socket);
-    m_reg_router.initiator_socket.bind(ALIAS_A);
-    m_reg_router.rename_last(std::string(this->name()) + ".ALIAS_A.target_socket");
-
-    ALIAS_B.initiator_socket.bind(m_reg_memory.socket);
-    m_reg_router.initiator_socket.bind(ALIAS_B);
-    m_reg_router.rename_last(std::string(this->name()) + ".ALIAS_B.target_socket");
-
-    BANK3D_A.initiator_socket.bind(m_reg_memory.socket);
-    m_reg_router.initiator_socket.bind(BANK3D_A);
-    m_reg_router.rename_last(std::string(this->name()) + ".BANK3D_A.target_socket");
-
-    BANK3D_B.initiator_socket.bind(m_reg_memory.socket);
-    m_reg_router.initiator_socket.bind(BANK3D_B);
-    m_reg_router.rename_last(std::string(this->name()) + ".BANK3D_B.target_socket");
-
-    LOWPRI.initiator_socket.bind(m_reg_memory.socket);
-    m_reg_router.initiator_socket.bind(LOWPRI);
-    m_reg_router.rename_last(std::string(this->name()) + ".LOWPRI.target_socket");
-
-    SHADOW.initiator_socket.bind(m_reg_memory.socket);
-    m_reg_router.initiator_socket.bind(SHADOW);
-    m_reg_router.rename_last(std::string(this->name()) + ".SHADOW.target_socket");
+    m_register_model.bind_register(FIFO0);
+    m_register_model.bind_register(CMD0);
+    m_register_model.bind_register(LAST_WORD);
+    m_register_model.bind_register(STATUS64);
+    m_register_model.bind_register(BANK64);
+    m_register_model.bind_register(BANK1D);
+    m_register_model.bind_register(BANK_GAP);
+    m_register_model.bind_register(BANK2D);
+    m_register_model.bind_register(ALIAS_A);
+    m_register_model.bind_register(ALIAS_B);
+    m_register_model.bind_register(BANK3D_A);
+    BANK3D_B.p_relative_addresses = false;
+    m_register_model.bind_register(BANK3D_B);
+    m_register_model.bind_register(LOWPRI);
+    m_register_model.bind_register(SHADOW);
 }
 
 void RegisterTestBench::end_of_elaboration()
@@ -223,27 +186,58 @@ void RegisterTestBench::end_of_elaboration()
     ALIAS_A.post_write([&](tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) { alias_a_hits++; });
     ALIAS_B.post_write([&](tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) { alias_b_hits++; });
 
-    // trans.get_address() inside the callback is the router-stripped relative
-    // offset (use_offset=true), so we record it as-is for later assertions.
+    // A uses relative offsets; B explicitly selects physical callback addresses.
     BANK3D_A.post_write([&](tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
         bank3d_a_hits++;
-        bank3d_a_last_rel_addr = trans.get_address();
+        bank3d_a_last_addr = trans.get_address();
     });
     BANK3D_B.post_write([&](tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
         bank3d_b_hits++;
-        bank3d_b_last_rel_addr = trans.get_address();
+        bank3d_b_last_addr = trans.get_address();
     });
 
     LOWPRI.post_write([&](tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) { lowpri_hits++; });
 
     SHADOW.post_write([&](tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
         shadow_hits++;
-        shadow_last_rel_addr = trans.get_address();
+        shadow_last_addr = trans.get_address();
     });
 }
 
 TEST_BENCH(RegisterTestBench, test_registers)
 {
+    ASSERT_EQ(LAST_WORD.get_mask(), 0xffffu);
+    uint32_t initial_last_word = 0x12345678u;
+    LAST_WORD.set(&initial_last_word, 0, 1, false);
+    uint32_t last_word = 0;
+    ASSERT_EQ(m_initiator.do_read(REG_MEM_SZ - sizeof(uint32_t), last_word), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(last_word, 0x12345678u);
+
+    LAST_WORD.set_mask(0xffffu);
+    ASSERT_EQ(m_initiator.do_write<uint32_t>(REG_MEM_SZ - sizeof(uint32_t), 0xaabbccddu), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(m_initiator.do_read(REG_MEM_SZ - sizeof(uint32_t), last_word), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(last_word, 0x1234ccddu);
+    uint32_t masked_write_value = 0xaabb5566u;
+    unsigned char byte_enables[] = { TLM_BYTE_DISABLED, TLM_BYTE_ENABLED, TLM_BYTE_ENABLED, TLM_BYTE_DISABLED };
+    tlm::tlm_generic_payload masked_write;
+    masked_write.set_command(tlm::TLM_WRITE_COMMAND);
+    masked_write.set_address(REG_MEM_SZ - sizeof(uint32_t));
+    masked_write.set_data_ptr(reinterpret_cast<unsigned char*>(&masked_write_value));
+    masked_write.set_data_length(sizeof(masked_write_value));
+    masked_write.set_streaming_width(sizeof(masked_write_value));
+    masked_write.set_byte_enable_ptr(byte_enables);
+    masked_write.set_byte_enable_length(sizeof(byte_enables));
+    sc_core::sc_time masked_delay = sc_core::SC_ZERO_TIME;
+    m_initiator.socket->b_transport(masked_write, masked_delay);
+    ASSERT_EQ(masked_write.get_response_status(), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(m_initiator.do_read(REG_MEM_SZ - sizeof(uint32_t), last_word), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(last_word, 0x123455ddu);
+    LAST_WORD.set_mask(0);
+    ASSERT_EQ(m_initiator.do_write<uint32_t>(REG_MEM_SZ - sizeof(uint32_t), 0), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(m_initiator.do_read(REG_MEM_SZ - sizeof(uint32_t), last_word), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(last_word, 0x123455ddu);
+    LAST_WORD.set_mask(gs::gs_full_mask<uint32_t>());
+
     uint32_t write_value = 0UL;
     SCP_DEBUG(()) << "****************Testing register array****************" << std::endl;
     SCP_DEBUG(()) << "Assert FIFO0 array register default mask is 0xFFFFFFFF";
@@ -325,6 +319,7 @@ TEST_BENCH(RegisterTestBench, test_registers)
     for (auto& it : last_read_vec) {
         it = 0xEFCDEFCDUL;
     }
+    trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
     ASSERT_EQ(m_initiator.do_b_transport(trans), tlm::TLM_OK_RESPONSE);
 
     SCP_DEBUG(()) << "****************Testing normal register (not register array case)****************" << std::endl;
@@ -411,6 +406,35 @@ TEST_BENCH(RegisterTestBench, test_registers)
     m_initiator.do_read<uint64_t>(STATUS64_ADDR, read_value_64);
     ASSERT_EQ(read_value_64, write_value_64); // 0x0ULL mask will be applied in pre_pread callback, so the value of the
                                               // register shouldn't change at write
+
+    LAST_WORD.set_mask(gs::gs_full_mask<uint32_t>());
+    CMD0 = 0x88776655u;
+    LAST_WORD = CMD0;
+    ASSERT_EQ(static_cast<uint32_t>(LAST_WORD), 0x88776655u);
+    LAST_WORD = 0x11223344u;
+    LAST_WORD.set_mask(0x00ff0000u);
+    ASSERT_EQ(m_initiator.do_write<uint16_t>(REG_MEM_SZ - 2, 0xffaau), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(static_cast<uint32_t>(LAST_WORD), 0x11aa3344u);
+    ASSERT_EQ(m_initiator.do_write<uint8_t>(REG_MEM_SZ - 1, 0xffu), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(static_cast<uint32_t>(LAST_WORD), 0x11aa3344u);
+
+    unsigned int callback_count = 0;
+    LAST_WORD.pre_write([&](auto&, auto&) {
+        if (++callback_count == 1) throw std::runtime_error("test callback exception");
+    });
+    uint32_t callback_value = 0x55555555u;
+    tlm::tlm_generic_payload callback_txn;
+    callback_txn.set_command(tlm::TLM_WRITE_COMMAND);
+    callback_txn.set_address(REG_MEM_SZ - 4);
+    callback_txn.set_data_ptr(reinterpret_cast<unsigned char*>(&callback_value));
+    callback_txn.set_data_length(sizeof(callback_value));
+    callback_txn.set_streaming_width(sizeof(callback_value));
+    sc_core::sc_time callback_delay = sc_core::SC_ZERO_TIME;
+    ASSERT_THROW(m_initiator.socket->b_transport(callback_txn, callback_delay), std::runtime_error);
+    ASSERT_EQ(callback_txn.get_address(), REG_MEM_SZ - 4);
+    ASSERT_EQ(m_initiator.do_write<uint32_t>(REG_MEM_SZ - 4, 0x55555555u), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(callback_count, 2u);
+    ASSERT_EQ(static_cast<uint32_t>(LAST_WORD), 0x11553344u);
 }
 
 TEST_BENCH(RegisterTestBench, test_registers_bank)
@@ -610,8 +634,7 @@ TEST_BENCH(RegisterTestBench, test_registers_bank)
     BANK_GAP.set_mask(gs::gs_full_mask<uint32_t>());
 
     SCP_DEBUG(()) << "**************** BANK_GAP: decode_access on element and gap ****************";
-    // p_relative_addresses defaults to true, so decode_access consumes the
-    // relative offset - the router strips the base before the callback runs.
+    // decode_access consumes the same bank-relative offsets as callbacks.
     tlm::tlm_generic_payload probe;
     probe.set_address(BANK_GAP_STRIDE * 2);
     auto acc_elem = BANK_GAP.decode_access(probe);
@@ -668,7 +691,7 @@ TEST_BENCH(RegisterTestBench, test_registers_bank)
     uint64_t target_addr = BANK2D_ADDR + 2 * BANK2D_ROW_STRIDE + 3 * BANK2D_COL_STRIDE;
     m_initiator.do_write<uint32_t>(target_addr, 0xFEEDFACEUL);
     ASSERT_EQ(bank2d_post_writes, prev_2d_post + 1);
-    // The callback observes the router-stripped relative address (use_offset).
+    // The callback observes the offset within the bank.
     ASSERT_EQ(bank2d_last_write_addr, 2 * BANK2D_ROW_STRIDE + 3 * BANK2D_COL_STRIDE);
     ASSERT_EQ(static_cast<uint32_t>(BANK2D(2, 3)), 0xFEEDFACEUL);
 
@@ -685,7 +708,7 @@ TEST_BENCH(RegisterTestBench, test_registers_bank)
 
     SCP_DEBUG(()) << "**************** BANK2D: decode_access returns per-dim indices ****************";
     tlm::tlm_generic_payload probe2d;
-    // Relative address into the bank (router strips the base for callbacks).
+    // Bank-relative offset, as delivered to callbacks.
     probe2d.set_address(1 * BANK2D_ROW_STRIDE + 2 * BANK2D_COL_STRIDE);
     auto acc2d = BANK2D.decode_access(probe2d);
     ASSERT_TRUE(bool(acc2d));
@@ -749,6 +772,32 @@ TEST_BENCH(RegisterTestBench, test_registers_bank)
     ASSERT_EQ(static_cast<uint64_t>(BANK64[0]), 0xFEDCBA9876543210ULL);
     ASSERT_EQ(static_cast<uint64_t>(BANK64[0][BANK64_FULL]), 0xFEDCBA9876543210ULL);
 
+    BANK64.set_element_mask(0, 0xffffffffULL);
+    ASSERT_EQ(m_initiator.do_write<uint64_t>(BANK64_ADDR, 0x1111111122222222ULL), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(static_cast<uint64_t>(BANK64[0]), 0xFEDCBA9822222222ULL);
+    uint64_t masked_bank_value = 0x3333333344444444ULL;
+    unsigned char bank_byte_enables[] = { TLM_BYTE_ENABLED, TLM_BYTE_DISABLED };
+    tlm::tlm_generic_payload masked_bank_write;
+    masked_bank_write.set_command(tlm::TLM_WRITE_COMMAND);
+    masked_bank_write.set_address(BANK64_ADDR);
+    masked_bank_write.set_data_ptr(reinterpret_cast<unsigned char*>(&masked_bank_value));
+    masked_bank_write.set_data_length(sizeof(masked_bank_value));
+    masked_bank_write.set_streaming_width(sizeof(masked_bank_value));
+    masked_bank_write.set_byte_enable_ptr(bank_byte_enables);
+    masked_bank_write.set_byte_enable_length(sizeof(bank_byte_enables));
+    sc_core::sc_time masked_bank_delay = sc_core::SC_ZERO_TIME;
+    m_initiator.socket->b_transport(masked_bank_write, masked_bank_delay);
+    ASSERT_EQ(masked_bank_write.get_response_status(), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(static_cast<uint64_t>(BANK64[0]), 0xFEDCBA9822442244ULL);
+    ASSERT_EQ(m_initiator.do_write<uint16_t>(BANK64_ADDR + 1, 0xaabbu), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(static_cast<uint64_t>(BANK64[0]), 0xFEDCBA9822AABB44ULL);
+    ASSERT_EQ(m_initiator.do_write<uint16_t>(BANK64_ADDR + 5, 0xffffu), tlm::TLM_OK_RESPONSE);
+    ASSERT_EQ(static_cast<uint64_t>(BANK64[0]), 0xFEDCBA9822AABB44ULL);
+    BANK64.internal_write({ 0 }, 0x1122334455667788ULL);
+    ASSERT_EQ(static_cast<uint64_t>(BANK64[0]), 0x1122334455667788ULL);
+    ASSERT_EQ(BANK64.get_element_mask(0), 0xffffffffULL);
+    BANK64.clear_element_mask(0);
+
     // Same test on a 3D element via BANK3D_A[i][j][k][field].
     BANK3D_A[0][0][0] = 0xDEADC0DEul; // sentinel: must survive adjacent field writes
     BANK3D_A[0][1][0] = 0x00000000UL;
@@ -766,7 +815,7 @@ TEST_BENCH(RegisterTestBench, test_registers_bank)
     // ALIAS_A and ALIAS_B are both cb_targets at ALIAS_ADDR with default priority
     // 0. reg_router's do_callbacks must invoke BOTH per transaction (once at
     // pre-, once at post-, so each register's post_write CB fires once per
-    // initiator write). LOWPRI shares the address at priority 1 and is filtered
+    // initiator write). LOWPRI shares the address at priority -1 and is filtered
     // out - the router keeps only the strongest-priority claimants.
     int a_before = alias_a_hits;
     int b_before = alias_b_hits;
@@ -774,7 +823,7 @@ TEST_BENCH(RegisterTestBench, test_registers_bank)
     m_initiator.do_write<uint32_t>(ALIAS_ADDR, 0x77777777UL);
     ASSERT_EQ(alias_a_hits, a_before + 1);
     ASSERT_EQ(alias_b_hits, b_before + 1);
-    ASSERT_EQ(lowpri_hits, lowpri_before); // priority-1 target must not fire
+    ASSERT_EQ(lowpri_hits, lowpri_before); // priority -1 target must not fire
     m_initiator.do_write<uint32_t>(ALIAS_ADDR, 0x88888888UL);
     ASSERT_EQ(alias_a_hits, a_before + 2);
     ASSERT_EQ(alias_b_hits, b_before + 2);
@@ -905,14 +954,14 @@ TEST_BENCH(RegisterTestBench, test_registers_bank_extras)
     m_initiator.do_write<uint32_t>(addr_A_101, 0xA1010101UL);
     ASSERT_EQ(bank3d_a_hits, a_before + 1);
     ASSERT_EQ(bank3d_b_hits, b_before); // no cross-fire onto B
-    ASSERT_EQ(bank3d_a_last_rel_addr, 1UL * BANK3D_S0 + 1UL * BANK3D_S2);
+    ASSERT_EQ(bank3d_a_last_addr, addr_A_101 - BANK3D_A_ADDR);
 
     // Symmetrically, a write to B(1,0,1) hits B and not A.
     uint64_t addr_B_101 = BANK3D_B_ADDR + 1 * BANK3D_S0 + 0 * BANK3D_S1 + 1 * BANK3D_S2;
     m_initiator.do_write<uint32_t>(addr_B_101, 0xB1010101UL);
     ASSERT_EQ(bank3d_a_hits, a_before + 1); // A didn't fire again
     ASSERT_EQ(bank3d_b_hits, b_before + 1);
-    ASSERT_EQ(bank3d_b_last_rel_addr, 1UL * BANK3D_S0 + 1UL * BANK3D_S2);
+    ASSERT_EQ(bank3d_b_last_addr, addr_B_101); // Explicit absolute-address policy is preserved.
 
     // Read-back through the cursor confirms neither bank stomped on the other.
     ASSERT_EQ(static_cast<uint32_t>(BANK3D_A(1, 0, 1)), 0xA1010101UL);
@@ -994,18 +1043,18 @@ TEST_BENCH(RegisterTestBench, test_registers_bank_extras)
     ASSERT_EQ(bank1d_post_writes, bank1d_before + 1);
     ASSERT_EQ(bank2d_post_writes, bank2d_before + 1);
 
-    SCP_DEBUG(()) << "**************** SHADOW: address decoded is relative and 4-byte-indexed ****************";
+    SCP_DEBUG(()) << "**************** SHADOW: physical address decoded to a 4-byte index ****************";
     // The last shadow write was to BANK3D_A(1,0,1) at absolute 0x948. With
-    // SHADOW at base 0, use_offset=true, the callback sees address 0x948 and
+    // SHADOW at base 0, the callback sees physical address 0x948 and
     // decode_access maps it to element 0x948/4 = 0x252.
-    ASSERT_EQ(shadow_last_rel_addr, addr_A_101);
+    ASSERT_EQ(shadow_last_addr, addr_A_101);
     tlm::tlm_generic_payload probe;
-    probe.set_address(shadow_last_rel_addr);
+    probe.set_address(shadow_last_addr);
     auto sh_acc = SHADOW.decode_access(probe);
     ASSERT_TRUE(bool(sh_acc));
-    ASSERT_EQ(sh_acc.index, shadow_last_rel_addr / SHADOW_STRIDE);
+    ASSERT_EQ(sh_acc.index, shadow_last_addr / SHADOW_STRIDE);
     ASSERT_EQ(sh_acc.indices.size(), 1u);
-    ASSERT_EQ(sh_acc.indices[0], shadow_last_rel_addr / SHADOW_STRIDE);
+    ASSERT_EQ(sh_acc.indices[0], shadow_last_addr / SHADOW_STRIDE);
 
     SCP_DEBUG(()) << "**************** SHADOW: does not fire on unclaimed addresses ****************";
     // A read at BANK_GAP_ADDR+4 lands in BANK_GAP's inter-element gap. SHADOW's
@@ -1034,21 +1083,21 @@ int sc_main(int argc, char* argv[])
         { "test_registers.reg_memory.target_socket.relative_addresses", cci::cci_value(false) },
         { "test_registers.reg_memory.verbose", cci::cci_value(true) },
         { "test_registers.reg_memory.init_mem", cci::cci_value(true) },
-        { "test_registers.LOWPRI.target_socket.priority", cci::cci_value(1UL) },
+        { "test_registers.LOWPRI.target_socket.priority", cci::cci_value(-1) },
 
         { "test_registers_bank.reg_memory.target_socket.address", cci::cci_value(REG_MEM_ADDR) },
         { "test_registers_bank.reg_memory.target_socket.size", cci::cci_value(REG_MEM_SZ) },
         { "test_registers_bank.reg_memory.target_socket.relative_addresses", cci::cci_value(false) },
         { "test_registers_bank.reg_memory.verbose", cci::cci_value(true) },
         { "test_registers_bank.reg_memory.init_mem", cci::cci_value(true) },
-        { "test_registers_bank.LOWPRI.target_socket.priority", cci::cci_value(1UL) },
+        { "test_registers_bank.LOWPRI.target_socket.priority", cci::cci_value(-1) },
 
         { "test_registers_bank_extras.reg_memory.target_socket.address", cci::cci_value(REG_MEM_ADDR) },
         { "test_registers_bank_extras.reg_memory.target_socket.size", cci::cci_value(REG_MEM_SZ) },
         { "test_registers_bank_extras.reg_memory.target_socket.relative_addresses", cci::cci_value(false) },
         { "test_registers_bank_extras.reg_memory.verbose", cci::cci_value(true) },
         { "test_registers_bank_extras.reg_memory.init_mem", cci::cci_value(true) },
-        { "test_registers_bank_extras.LOWPRI.target_socket.priority", cci::cci_value(1UL) },
+        { "test_registers_bank_extras.LOWPRI.target_socket.priority", cci::cci_value(-1) },
     });
 
     ::testing::InitGoogleTest(&argc, argv);

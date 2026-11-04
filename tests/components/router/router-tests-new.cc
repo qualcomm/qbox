@@ -79,8 +79,8 @@ public:
     {
         // Setup Target 0: higher priority (priority = 0)
         setup_target(0, 0x5000, 0x1000, true, 0); // ID 0, base 0x5000, size 0x1000, priority 0
-        // Setup Target 1: lower priority (priority = 1)
-        setup_target(1, 0x5500, 0x500, true, 1); // ID 1, base 0x5500, size 0x500, priority 1
+        // Setup Target 1: lower priority (priority = -1)
+        setup_target(1, 0x5500, 0x500, true, -1); // ID 1, base 0x5500, size 0x500, priority -1
         // Call parent to process the targets
         RouterTestBenchSimple::before_end_of_elaboration();
     }
@@ -278,8 +278,7 @@ int sc_main(int argc, char* argv[])
                                     cci::cci_value(std::numeric_limits<uint64_t>::max()), originator);
         broker.set_preset_cci_value(default_target_socket_name + ".relative_addresses", cci::cci_value(true),
                                     originator);
-        broker.set_preset_cci_value(default_target_socket_name + ".priority",
-                                    cci::cci_value(static_cast<unsigned int>(100)),
+        broker.set_preset_cci_value(default_target_socket_name + ".priority", cci::cci_value(-100),
                                     originator); // Lower priority
     }
 

@@ -23,6 +23,7 @@
 #include <tests/target-tester.h>
 #include <tlm-extensions/underlying-dmi.h>
 #include <tlm_sockets_buswidth.h>
+#include <stdexcept>
 
 class RouterCoverageTests : public sc_core::sc_module
 {
@@ -98,8 +99,6 @@ public:
         setup_dmi_overlap();
         setup_dmi_invalidation();
         setup_underlying_dmi();
-
-        SC_THREAD(run_all_tests);
     }
 
     // --- Setup methods ---
@@ -214,6 +213,7 @@ public:
         ok &= test_dmi_invalidation();
         ok &= test_underlying_dmi_mapped();
         ok &= test_underlying_dmi_unmapped();
+        ok &= test_transport_exception_cleanup();
 
         exit_code = ok ? 0 : 1;
         if (ok) {
@@ -222,6 +222,46 @@ public:
             std::cout << "Some router coverage tests FAILED" << std::endl;
         }
         sc_core::sc_stop();
+    }
+
+    // Relative routing must restore caller state even when the target throws.
+    bool test_transport_exception_cleanup()
+    {
+        bool relative_address_seen = false;
+        const auto throwing_read = [&](uint64_t address, uint8_t*, size_t) -> tlm::tlm_response_status {
+            relative_address_seen = address == 0x54;
+            throw std::runtime_error("target transport failure");
+        };
+        t9.register_read_cb(throwing_read);
+        t9.register_debug_read_cb(throwing_read);
+
+        uint8_t data[4] = {};
+        tlm::tlm_generic_payload txn;
+        txn.set_address(0x5054);
+        txn.set_command(tlm::TLM_READ_COMMAND);
+        txn.set_data_ptr(data);
+        txn.set_data_length(sizeof(data));
+        txn.set_streaming_width(sizeof(data));
+        for (const bool debug : { false, true }) {
+            auto delay = sc_core::SC_ZERO_TIME;
+            bool thrown = false;
+            relative_address_seen = false;
+            try {
+                if (debug)
+                    i9.socket->transport_dbg(txn);
+                else
+                    i9.socket->b_transport(txn, delay);
+            } catch (const std::runtime_error&) {
+                thrown = true;
+            }
+            if (!thrown || !relative_address_seen || txn.get_address() != 0x5054 ||
+                txn.get_extension<gs::PathIDExtension>() != nullptr) {
+                std::cout << "FAIL: Transport exception left address or path modified" << std::endl;
+                return false;
+            }
+        }
+        std::cout << "PASS: Blocking and debug exceptions restore address and path" << std::endl;
+        return true;
     }
 
     // Verify preset CCI values override add_target arguments
@@ -513,7 +553,8 @@ int sc_main(int argc, char* argv[])
                                         .msgTypeFieldWidth(50));
 
     RouterCoverageTests test("cov_test");
-    sc_core::sc_start();
+    sc_core::sc_start(sc_core::SC_ZERO_TIME);
+    test.run_all_tests();
 
     return test.exit_code;
 }

@@ -9,7 +9,7 @@
 #include <tlm_utils/simple_initiator_socket.h>
 #include <tlm_utils/simple_target_socket.h>
 #include "gs_memory.h"
-#include "reg_router.h"
+#include "register_model.h"
 #include "registers.h"
 #include <tests/initiator-tester.h>
 #include <tests/test-bench.h>
@@ -23,9 +23,10 @@ public:
 protected:
     InitiatorTester m_initiator;
     gs::gs_memory<> m_reg_memory;
-    gs::reg_router<> m_reg_router;
+    gs::register_model m_register_model;
     gs::gs_register<uint32_t> FIFO0;
     gs::gs_register<uint32_t> CMD0;
+    gs::gs_register<uint32_t> LAST_WORD;
     gs::gs_field<uint32_t> CMD0_OPCODE;
     gs::gs_field<uint32_t> CMD0_PARAM;
     gs::gs_register<uint64_t> STATUS64;
@@ -64,11 +65,11 @@ protected:
     int alias_b_hits;
     int bank3d_a_hits;
     int bank3d_b_hits;
-    uint64_t bank3d_a_last_rel_addr;
-    uint64_t bank3d_b_last_rel_addr;
+    uint64_t bank3d_a_last_addr;
+    uint64_t bank3d_b_last_addr;
     int lowpri_hits;
     int shadow_hits;
-    uint64_t shadow_last_rel_addr;
+    uint64_t shadow_last_addr;
 
 public:
     RegisterTestBench(const sc_core::sc_module_name& n);

@@ -29,12 +29,12 @@ public:
     void before_end_of_elaboration() override
     {
         // Setup three overlapping regions:
-        // Region A: 0x1000-0x1FFF (priority 30 - lowest)
-        // Region B: 0x1200-0x17FF (priority 10 - medium)
+        // Region A: 0x1000-0x1FFF (priority -30 - lowest)
+        // Region B: 0x1200-0x17FF (priority -10 - medium)
         // Region C: 0x1400-0x15FF (priority 0 - highest)
-        setup_target(0, 0x1000, 0x1000, true, 30); // Lowest priority
-        setup_target(1, 0x1200, 0x600, true, 10);  // Medium priority
-        setup_target(2, 0x1400, 0x200, true, 0);   // Highest priority
+        setup_target(0, 0x1000, 0x1000, true, -30); // Lowest priority
+        setup_target(1, 0x1200, 0x600, true, -10);  // Medium priority
+        setup_target(2, 0x1400, 0x200, true, 0);    // Highest priority
 
         // Call parent to process the targets
         RouterTestBenchSimple::before_end_of_elaboration();
@@ -68,10 +68,10 @@ public:
     void before_end_of_elaboration() override
     {
         // Setup partially overlapping regions:
-        // Region A: 0x1000-0x17FF (priority 10)
-        // Region B: 0x1400-0x1BFF (priority 5) - higher priority
-        setup_target(0, 0x1000, 0x800, true, 10); // Lower priority
-        setup_target(1, 0x1400, 0x800, true, 5);  // Higher priority
+        // Region A: 0x1000-0x17FF (priority -10)
+        // Region B: 0x1400-0x1BFF (priority -5) - higher priority
+        setup_target(0, 0x1000, 0x800, true, -10); // Lower priority
+        setup_target(1, 0x1400, 0x800, true, -5);  // Higher priority
 
         // Call parent to process the targets
         RouterTestBenchSimple::before_end_of_elaboration();
@@ -105,12 +105,12 @@ public:
     void before_end_of_elaboration() override
     {
         // Setup chain overlapping regions:
-        // Region A: 0x1000-0x17FF (priority 20)
-        // Region B: 0x1600-0x1DFF (priority 10) - overlaps A
-        // Region C: 0x1C00-0x23FF (priority 5)  - overlaps B, higher priority
-        setup_target(0, 0x1000, 0x800, true, 20); // Lowest priority
-        setup_target(1, 0x1600, 0x800, true, 10); // Medium priority
-        setup_target(2, 0x1C00, 0x800, true, 5);  // Highest priority
+        // Region A: 0x1000-0x17FF (priority -20)
+        // Region B: 0x1600-0x1DFF (priority -10) - overlaps A
+        // Region C: 0x1C00-0x23FF (priority -5)  - overlaps B, higher priority
+        setup_target(0, 0x1000, 0x800, true, -20); // Lowest priority
+        setup_target(1, 0x1600, 0x800, true, -10); // Medium priority
+        setup_target(2, 0x1C00, 0x800, true, -5);  // Highest priority
 
         // Call parent to process the targets
         RouterTestBenchSimple::before_end_of_elaboration();
@@ -144,16 +144,16 @@ public:
     void before_end_of_elaboration() override
     {
         // Setup complex nested regions:
-        // Outer:  0x1000-0x1FFF (priority 50 - lowest)
-        // Middle: 0x1200-0x1DFF (priority 25)
-        // Inner1: 0x1400-0x15FF (priority 10)
-        // Inner2: 0x1600-0x17FF (priority 5)  - highest priority
-        // Inner3: 0x1800-0x19FF (priority 15)
-        setup_target(0, 0x1000, 0x1000, true, 50); // Outer - lowest priority
-        setup_target(1, 0x1200, 0xC00, true, 25);  // Middle
-        setup_target(2, 0x1400, 0x200, true, 10);  // Inner1
-        setup_target(3, 0x1600, 0x200, true, 5);   // Inner2 - highest priority
-        setup_target(4, 0x1800, 0x200, true, 15);  // Inner3
+        // Outer:  0x1000-0x1FFF (priority -50 - lowest)
+        // Middle: 0x1200-0x1DFF (priority -25)
+        // Inner1: 0x1400-0x15FF (priority -10)
+        // Inner2: 0x1600-0x17FF (priority -5)  - highest priority
+        // Inner3: 0x1800-0x19FF (priority -15)
+        setup_target(0, 0x1000, 0x1000, true, -50); // Outer - lowest priority
+        setup_target(1, 0x1200, 0xC00, true, -25);  // Middle
+        setup_target(2, 0x1400, 0x200, true, -10);  // Inner1
+        setup_target(3, 0x1600, 0x200, true, -5);   // Inner2 - highest priority
+        setup_target(4, 0x1800, 0x200, true, -15);  // Inner3
 
         // Call parent to process the targets
         RouterTestBenchSimple::before_end_of_elaboration();
@@ -193,10 +193,10 @@ public:
     void before_end_of_elaboration() override
     {
         // Setup regions with same priority - behavior should be deterministic
-        // Region A: 0x1000-0x17FF (priority 10)
-        // Region B: 0x1400-0x1BFF (priority 10) - same priority
-        setup_target(0, 0x1000, 0x800, true, 10);
-        setup_target(1, 0x1400, 0x800, true, 10);
+        // Region A: 0x1000-0x17FF (priority -10)
+        // Region B: 0x1400-0x1BFF (priority -10) - same priority
+        setup_target(0, 0x1000, 0x800, true, -10);
+        setup_target(1, 0x1400, 0x800, true, -10);
 
         // Call parent to process the targets
         RouterTestBenchSimple::before_end_of_elaboration();
@@ -234,12 +234,12 @@ public:
     void before_end_of_elaboration() override
     {
         // Setup regions with exact boundary conditions
-        // Region A: 0x1000-0x1FFF (priority 10)
-        // Region B: 0x2000-0x2FFF (priority 10) - adjacent, no overlap
-        // Region C: 0x1FFF-0x2000 (priority 5)  - single byte overlap with both
-        setup_target(0, 0x1000, 0x1000, true, 10);
-        setup_target(1, 0x2000, 0x1000, true, 10);
-        setup_target(2, 0x1FFF, 0x2, true, 5); // Higher priority, covers boundary
+        // Region A: 0x1000-0x1FFF (priority -10)
+        // Region B: 0x2000-0x2FFF (priority -10) - adjacent, no overlap
+        // Region C: 0x1FFF-0x2000 (priority -5)  - single byte overlap with both
+        setup_target(0, 0x1000, 0x1000, true, -10);
+        setup_target(1, 0x2000, 0x1000, true, -10);
+        setup_target(2, 0x1FFF, 0x2, true, -5); // Higher priority, covers boundary
 
         // Call parent to process the targets
         RouterTestBenchSimple::before_end_of_elaboration();
@@ -278,7 +278,7 @@ public:
         // (lower index = higher priority)
         for (int i = 0; i < NUM_REGIONS; i++) {
             uint64_t addr = BASE_ADDR + (i * OVERLAP_OFFSET);
-            uint32_t priority = NUM_REGIONS - i; // Higher index = lower priority
+            int priority = -(NUM_REGIONS - i); // Higher index = lower priority
             setup_target(i, addr, REGION_SIZE, true, priority);
         }
 
@@ -322,10 +322,10 @@ public:
     void before_end_of_elaboration() override
     {
         // Setup overlapping regions for DMI testing
-        // Region A: 0x5000-0x5FFF (priority 10)
-        // Region B: 0x5800-0x67FF (priority 5) - higher priority, overlaps A
-        setup_target(0, 0x5000, 0x1000, true, 10);
-        setup_target(1, 0x5800, 0x1000, true, 5);
+        // Region A: 0x5000-0x5FFF (priority -10)
+        // Region B: 0x5800-0x67FF (priority -5) - higher priority, overlaps A
+        setup_target(0, 0x5000, 0x1000, true, -10);
+        setup_target(1, 0x5800, 0x1000, true, -5);
 
         // Call parent to process the targets
         RouterTestBenchSimple::before_end_of_elaboration();
@@ -355,8 +355,8 @@ public:
     {
         // Setup initial region and overlapping region during elaboration
         // (Note: The original test tried to add targets dynamically, which violates our architecture)
-        setup_target(0, 0x8000, 0x1000, true, 10);
-        setup_target(1, 0x8400, 0x800, true, 5); // Higher priority, overlaps target 0
+        setup_target(0, 0x8000, 0x1000, true, -10);
+        setup_target(1, 0x8400, 0x800, true, -5); // Higher priority, overlaps target 0
 
         // Call parent to process the targets
         RouterTestBenchSimple::before_end_of_elaboration();
@@ -457,8 +457,7 @@ int sc_main(int argc, char* argv[])
                                     cci::cci_value(std::numeric_limits<uint64_t>::max()), originator);
         broker.set_preset_cci_value(default_target_socket_name + ".relative_addresses", cci::cci_value(true),
                                     originator);
-        broker.set_preset_cci_value(default_target_socket_name + ".priority",
-                                    cci::cci_value(static_cast<unsigned int>(100)),
+        broker.set_preset_cci_value(default_target_socket_name + ".priority", cci::cci_value(-100),
                                     originator); // Lower priority
     }
 

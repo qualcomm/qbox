@@ -16,8 +16,8 @@
  * @brief Test for router shadowing warnings
  *
  * These tests verify that the router correctly issues warnings when regions
- * with lower priority (higher priority values) are completely shadowed by
- * regions with higher priority (lower priority values).
+ * with lower priority (more negative values) are completely shadowed by
+ * regions with higher priority (larger values).
  */
 
 // Test bench for completely shadowed region
@@ -29,11 +29,11 @@ public:
     void before_end_of_elaboration() override
     {
         // Setup a low priority region first
-        setup_target(0, 0x1000, 0x1000, true, 20); // Low priority (high value)
+        setup_target(0, 0x1000, 0x1000, true, -20); // Low priority (more negative value)
 
         // Now add a high priority region that completely covers the first one
         // This should generate a warning about the first region being shadowed
-        setup_target(1, 0x1000, 0x1000, true, 5); // High priority (low value)
+        setup_target(1, 0x1000, 0x1000, true, -5); // High priority (larger value)
 
         // Call parent to process the targets
         RouterTestBenchSimple::before_end_of_elaboration();
@@ -56,11 +56,11 @@ public:
     void before_end_of_elaboration() override
     {
         // Setup a low priority region
-        setup_target(0, 0x1000, 0x1000, true, 20); // Low priority: 0x1000-0x1FFF
+        setup_target(0, 0x1000, 0x1000, true, -20); // Low priority: 0x1000-0x1FFF
 
         // Add a high priority region that only partially covers the first one
         // This should NOT generate a warning since part of region 0 is still accessible
-        setup_target(1, 0x1200, 0x600, true, 5); // High priority: 0x1200-0x17FF
+        setup_target(1, 0x1200, 0x600, true, -5); // High priority: 0x1200-0x17FF
 
         // Call parent to process the targets
         RouterTestBenchSimple::before_end_of_elaboration();
@@ -84,13 +84,13 @@ public:
     void before_end_of_elaboration() override
     {
         // Setup multiple regions
-        setup_target(0, 0x1000, 0x500, true, 10); // Medium priority: 0x1000-0x14FF
-        setup_target(1, 0x2000, 0x500, true, 30); // Low priority: 0x2000-0x24FF
-        setup_target(2, 0x3000, 0x500, true, 5);  // High priority: 0x3000-0x34FF
+        setup_target(0, 0x1000, 0x500, true, -10); // Medium priority: 0x1000-0x14FF
+        setup_target(1, 0x2000, 0x500, true, -30); // Low priority: 0x2000-0x24FF
+        setup_target(2, 0x3000, 0x500, true, -5);  // High priority: 0x3000-0x34FF
 
         // Now add a region that completely shadows target 1
         // This should generate a warning about target 1 being shadowed
-        setup_target(3, 0x2000, 0x500, true, 5); // High priority: 0x2000-0x24FF
+        setup_target(3, 0x2000, 0x500, true, -5); // High priority: 0x2000-0x24FF
 
         // Call parent to process the targets
         RouterTestBenchSimple::before_end_of_elaboration();
@@ -114,9 +114,9 @@ public:
     void before_end_of_elaboration() override
     {
         // Setup nested regions
-        setup_target(0, 0x1000, 0x1000, true, 30); // Outer, low priority: 0x1000-0x1FFF
-        setup_target(1, 0x1200, 0x600, true, 20);  // Middle, medium priority: 0x1200-0x17FF
-        setup_target(2, 0x1400, 0x200, true, 25);  // Inner, lower priority: 0x1400-0x15FF
+        setup_target(0, 0x1000, 0x1000, true, -30); // Outer, low priority: 0x1000-0x1FFF
+        setup_target(1, 0x1200, 0x600, true, -20);  // Middle, medium priority: 0x1200-0x17FF
+        setup_target(2, 0x1400, 0x200, true, -25);  // Inner, lower priority: 0x1400-0x15FF
 
         // Target 2 should be completely shadowed by target 1 (which has higher priority)
         // This should generate a warning
@@ -146,8 +146,8 @@ public:
     {
         // Setup regions with same priority - should not generate shadowing warnings
         // since the behavior is deterministic but not based on priority
-        setup_target(0, 0x1000, 0x800, true, 10); // Same priority
-        setup_target(1, 0x1000, 0x800, true, 10); // Same priority, same region
+        setup_target(0, 0x1000, 0x800, true, -10); // Same priority
+        setup_target(1, 0x1000, 0x800, true, -10); // Same priority, same region
 
         // Call parent to process the targets
         RouterTestBenchSimple::before_end_of_elaboration();
@@ -177,10 +177,10 @@ public:
     void before_end_of_elaboration() override
     {
         // Setup a large low priority region
-        setup_target(0, 0x1000, 0x10000, true, 50); // Very low priority, large region
+        setup_target(0, 0x1000, 0x10000, true, -50); // Very low priority, large region
 
         // Add a smaller high priority region that completely covers the large one
-        setup_target(1, 0x1000, 0x10000, true, 1); // High priority, same size
+        setup_target(1, 0x1000, 0x10000, true, -1); // High priority, same size
 
         // The large region should be completely shadowed and generate a warning
 
@@ -260,8 +260,7 @@ int sc_main(int argc, char* argv[])
                                     cci::cci_value(std::numeric_limits<uint64_t>::max()), originator);
         broker.set_preset_cci_value(default_target_socket_name + ".relative_addresses", cci::cci_value(true),
                                     originator);
-        broker.set_preset_cci_value(default_target_socket_name + ".priority",
-                                    cci::cci_value(static_cast<unsigned int>(100)),
+        broker.set_preset_cci_value(default_target_socket_name + ".priority", cci::cci_value(-100),
                                     originator); // Lower priority
     }
 
