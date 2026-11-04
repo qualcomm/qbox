@@ -28,7 +28,7 @@ namespace gs {
  * pointer to the parent instance of type PARENT_TYPE contaning the member pointer.
  */
 template <class PARENT_TYPE, class MEMBER_TYPE>
-PARENT_TYPE* container_of(const MEMBER_TYPE* member, const MEMBER_TYPE PARENT_TYPE::*member_ptr)
+PARENT_TYPE* container_of(const MEMBER_TYPE* member, const MEMBER_TYPE PARENT_TYPE::* member_ptr)
 {
     const PARENT_TYPE* const parent = 0;
     auto member_offset = reinterpret_cast<ptrdiff_t>(reinterpret_cast<const uint8_t*>(&(parent->*member_ptr)) -

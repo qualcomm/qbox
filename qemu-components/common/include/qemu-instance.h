@@ -211,10 +211,14 @@ protected:
 
         m_inst.push_qemu_arg("libqbox"); /* argv[0] */
         m_inst.push_qemu_arg({
-            "-M", "none",       /* no machine */
-            "-m", "0",          /* Guest memory is managed by gs_memory module */
-            "-monitor", "null", /* no monitor */
-            "-serial", "null",  /* no serial backend */
+            "-M",
+            "none", /* no machine */
+            "-m",
+            "0", /* Guest memory is managed by gs_memory module */
+            "-monitor",
+            "null", /* no monitor */
+            "-serial",
+            "null", /* no serial backend */
         });
 
         const char* args = "qemu_args."; /* Update documentations because it's not anymore 'args.' it's 'qemu_args.' */
@@ -526,7 +530,8 @@ public:
 
         if (m_display_argument.empty()) {
             m_inst.push_qemu_arg({
-                "-display", "none", /* no GUI */
+                "-display",
+                "none", /* no GUI */
             });
         }
 
