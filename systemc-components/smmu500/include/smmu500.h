@@ -34,6 +34,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <map>
 #include <vector>
 #include <memory>
 #include <mutex>
@@ -1615,6 +1616,8 @@ class smmu500_tbu : public sc_core::sc_module
         const uint64_t size;
         QemuInstanceDmiManager::QemuContainer owner;
         std::shared_ptr<qemu::IOMMUMemoryRegion> mr;
+        std::map<uint64_t, qemu::IOMMUMemoryRegion::IOMMUTLBEntry> ranges[2];
+        std::mutex cache_mutex;
 
         QemuIommuRegion(uint64_t region_start, uint64_t region_size): start(region_start), size(region_size) {}
     };
@@ -1654,6 +1657,20 @@ class smmu500_tbu : public sc_core::sc_module
                   .perm = qemu::IOMMUMemoryRegion::IOMMU_NONE };
         if (addr >= region.size) {
             return;
+        }
+
+        const bool cache_eligible = flags == qemu::IOMMUMemoryRegion::IOMMU_NONE && (idx == 0 || idx == 1);
+        if (cache_eligible) {
+            std::lock_guard<std::mutex> cache_lock(region.cache_mutex);
+            auto& ranges = region.ranges[idx];
+            auto it = ranges.upper_bound(addr);
+            if (it != ranges.begin()) {
+                --it;
+                if (addr - it->second.iova <= it->second.addr_mask) {
+                    entry = it->second;
+                    return;
+                }
+            }
         }
 
         auto translated = entry;
@@ -1707,6 +1724,10 @@ class smmu500_tbu : public sc_core::sc_module
             return;
         }
         entry = translated;
+        if (cache_eligible && entry.perm != qemu::IOMMUMemoryRegion::IOMMU_NONE) {
+            std::lock_guard<std::mutex> cache_lock(region.cache_mutex);
+            region.ranges[idx][entry.iova] = entry;
+        }
     }
 
     void set_iommu_hint(tlm::tlm_generic_payload& txn)
@@ -1764,6 +1785,11 @@ class smmu500_tbu : public sc_core::sc_module
         auto& inst = region.mr->get_inst();
         const bool iothread_locked = inst.is_iothread_locked();
         if (!iothread_locked) inst.lock_iothread();
+        {
+            std::lock_guard<std::mutex> cache_lock(region.cache_mutex);
+            region.ranges[0].clear();
+            region.ranges[1].clear();
+        }
         qemu::IOMMUMemoryRegion::IOMMUTLBEntry flush = {
             .target_as = downstream_socket.get_address_space().get_ptr(),
             .iova = 0,
