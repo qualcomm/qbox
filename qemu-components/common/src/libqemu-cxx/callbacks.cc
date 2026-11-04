@@ -64,8 +64,8 @@ void LibQemu::init_callbacks()
     m_int->exports().set_cpu_kick_cb(generic_cpu_kick_cb, m_int.get());
 
     m_int->exports().set_iommu_translate_cb((LibQemuIOMMUTranslateFn)generic_iommu_translate_cb, m_int.get());
-    m_int->exports().set_iommu_attrs_to_index_cb(
-        (LibQemuIOMMUAttrsToIndexFn)generic_iommu_attrs_to_index_cb, m_int.get());
+    m_int->exports().set_iommu_attrs_to_index_cb((LibQemuIOMMUAttrsToIndexFn)generic_iommu_attrs_to_index_cb,
+                                                 m_int.get());
     m_int->exports().set_iommu_num_indexes_cb((LibQemuIOMMUNumIndexesFn)generic_iommu_num_indexes_cb, m_int.get());
 
     if (m_int->exports().cpu_riscv_register_mip_update_callback != nullptr) {

@@ -81,12 +81,8 @@ private:
     std::vector<std::shared_ptr<Gpio::GpioProxy>> m_gpio_proxies;
 
     std::vector<LibQemuObjectCallbackBase*> m_cbs{
-        &m_cpu_end_of_loop_cbs,
-        &m_cpu_kick_cbs,
-        &m_iommu_translate_cbs,
-        &m_iommu_attrs_to_index_cbs,
-        &m_iommu_num_indexes_cbs,
-        &m_riscv_mip_update_cbs,
+        &m_cpu_end_of_loop_cbs,      &m_cpu_kick_cbs,          &m_iommu_translate_cbs,
+        &m_iommu_attrs_to_index_cbs, &m_iommu_num_indexes_cbs, &m_riscv_mip_update_cbs,
     };
 
 public:
@@ -115,10 +111,7 @@ public:
         return m_iommu_attrs_to_index_cbs;
     }
 
-    LibQemuObjectCallback<std::function<void(int*)>>& get_iommu_num_indexes_cb()
-    {
-        return m_iommu_num_indexes_cbs;
-    }
+    LibQemuObjectCallback<std::function<void(int*)>>& get_iommu_num_indexes_cb() { return m_iommu_num_indexes_cbs; }
 
     LibQemuObjectCallback<CpuRiscv64::MipUpdateCallbackFn>& get_cpu_riscv_mip_update_cb()
     {
