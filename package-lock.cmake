@@ -45,7 +45,7 @@ set(LOCK_LIBQEMU_GIT
   https://github.com/qualcomm/qemu.git
 )
 set(LOCK_LIBQEMU_TAG
-  libqemu-v11.0-v0.17
+  d3adc36e65cd0958258eb0f7d91b635e54568f41
 )
 
 CPMDeclarePackage(qemu
