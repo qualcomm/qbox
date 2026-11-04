@@ -15,6 +15,7 @@
 #include <cinttypes>
 
 #include <tlm>
+#include "tlm-extensions/qemu-security-attributes.h"
 
 #include <libqemu-cxx/libqemu-cxx.h>
 
@@ -363,8 +364,8 @@ protected:
                 auto it = find_region(m.second->m_mapped_te, addr - mr_start);
                 if (it != m.second->m_mapped_te.end()) {
                     uint64_t removed_addr = it->first + mr_start;
-                    SCP_TRACE(())("Suspected MMIO Region removed 0x{:x} (mask 0x{:x})", removed_addr,
-                                  it->second.addr_mask);
+                    SCP_TRACE(())
+                    ("Suspected MMIO Region removed 0x{:x} (mask 0x{:x})", removed_addr, it->second.addr_mask);
                     m.second->iommu_unmap(&(it->second));
                     m.second->m_mapped_te.erase(it);
                 }
@@ -587,6 +588,12 @@ protected:
 
         init_payload(trans, command, addr, val, size);
 
+        gs::security_attributes_extension security;
+        security.secure = attrs.secure;
+        security.debug = attrs.debug;
+
+        trans.set_extension(&security);
+
         if (trans.get_extension<ExclusiveAccessTlmExtension>()) {
             /* in the case of an exclusive access keep the iolock (and assume NO side-effects)
              * clearly dangerous, but exclusives are not guaranteed to work on IO space anyway
@@ -629,6 +636,8 @@ protected:
         default:
             return qemu::MemoryRegionOps::MemTxError;
         }
+
+        trans.clear_extension(&security);
     }
 
 public:
@@ -675,10 +684,7 @@ public:
         m_dev = dev;
     }
 
-    void end_of_simulation()
-    {
-        m_finished = true;
-    }
+    void end_of_simulation() { m_finished = true; }
 
     ~QemuInitiatorSocket()
     {
@@ -906,8 +912,9 @@ public:
                     }
                 }
 
-                SCP_DEBUG(())("Region(s) removed in range [0x{:x} - 0x{:x}] from mr [0x{:x} - 0x{:x}]", start_range,
-                              end_range, mr_start, mr_end);
+                SCP_DEBUG(())
+                ("Region(s) removed in range [0x{:x} - 0x{:x}] from mr [0x{:x} - 0x{:x}]", start_range, end_range,
+                 mr_start, mr_end);
                 return;
             }
         }

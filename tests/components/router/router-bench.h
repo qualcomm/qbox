@@ -44,7 +44,7 @@ public:
         uint64_t base_addr;
         size_t size;
         bool use_offset;
-        unsigned int priority;
+        int priority;
     };
     std::vector<TargetSetupParams> m_pending_target_setups; // Stores targets to be set up
 
@@ -152,8 +152,8 @@ protected:
         tlm::tlm_command cmd = is_load ? tlm::TLM_READ_COMMAND : tlm::TLM_WRITE_COMMAND;
 
         if (expected_ret == tlm::TLM_OK_RESPONSE) {
-            SCP_INFO(this->name())("Transaction check: Expected ID {}, Addr {:#x}, Len {}, Cmd {}", expected_id, addr,
-                                   len, cmd);
+            SCP_INFO(this->name())
+            ("Transaction check: Expected ID {}, Addr {:#x}, Len {}, Cmd {}", expected_id, addr, len, cmd);
             ASSERT_TRUE(m_last_target_txn.valid);
             ASSERT_EQ(m_last_target_txn.id, expected_id);
             ASSERT_EQ(m_last_target_txn.addr, addr);
@@ -172,8 +172,9 @@ protected:
         tlm::tlm_command cmd = is_load ? tlm::TLM_READ_COMMAND : tlm::TLM_WRITE_COMMAND;
 
         if (expected_ret_dbg > 0) { // Bytes transferred, means it hit
-            SCP_INFO(this->name())("Debug transaction check: Expected ID {}, Addr {:#x}, Len {}, Cmd {}, Ret {}",
-                                   expected_id, addr, len, cmd, expected_ret_dbg);
+            SCP_INFO(this->name())
+            ("Debug transaction check: Expected ID {}, Addr {:#x}, Len {}, Cmd {}, Ret {}", expected_id, addr, len, cmd,
+             expected_ret_dbg);
             ASSERT_TRUE(m_last_target_txn.valid);
             ASSERT_EQ(m_last_target_txn.id, expected_id);
             ASSERT_EQ(m_last_target_txn.addr, addr);
@@ -181,8 +182,8 @@ protected:
             ASSERT_EQ(m_last_target_txn.cmd, cmd);
             ASSERT_EQ(m_initiator.get_last_transport_debug_ret(), expected_ret_dbg);
         } else { // 0 bytes transferred, means it missed or error
-            SCP_INFO(this->name())("Debug transaction check: Expected error for Addr {:#x}, Cmd {}, Ret {}", addr, cmd,
-                                   expected_ret_dbg);
+            SCP_INFO(this->name())
+            ("Debug transaction check: Expected error for Addr {:#x}, Cmd {}, Ret {}", addr, cmd, expected_ret_dbg);
             ASSERT_FALSE(m_last_target_txn.valid);
             ASSERT_EQ(m_initiator.get_last_transport_debug_ret(), expected_ret_dbg);
         }
@@ -264,8 +265,8 @@ public:
         // DMI ranges from router include the target base address
         ASSERT_EQ(exp_start, dmi_data.get_start_address());
         ASSERT_EQ(exp_end, dmi_data.get_end_address());
-        SCP_INFO(this->name())("Good DMI request to address {:#x} successful. Range: {:#x}-{:#x}", addr, exp_start,
-                               exp_end);
+        SCP_INFO(this->name())
+        ("Good DMI request to address {:#x} successful. Range: {:#x}-{:#x}", addr, exp_start, exp_end);
     }
 
     void do_bad_dmi_request_and_check(uint64_t addr)
@@ -279,11 +280,12 @@ public:
 
 public:
     // Store target setup parameters to be processed later in before_end_of_elaboration
-    void setup_target(int id, uint64_t base_addr, size_t size, bool use_offset = true, unsigned int priority = 0)
+    void setup_target(int id, uint64_t base_addr, size_t size, bool use_offset = true, int priority = 0)
     {
         m_pending_target_setups.push_back({ id, base_addr, size, use_offset, priority });
-        SCP_INFO(this->name())("Queued target setup {}: base_addr={:#x}, size={:#x}, use_offset={}, priority={}", id,
-                               base_addr, size, use_offset, priority);
+        SCP_INFO(this->name())
+        ("Queued target setup {}: base_addr={:#x}, size={:#x}, use_offset={}, priority={}", id, base_addr, size,
+         use_offset, priority);
     }
 
     // Process pending target setups (called in before_end_of_elaboration)
@@ -293,8 +295,9 @@ public:
             char txt[20];
             snprintf(txt, 20, "Target_%d", params.id);
             TargetTester* new_target = new TargetTester(txt, params.size);
-            SCP_INFO(this->name())("Processing target {}: base_addr={:#x}, size={:#x}, use_offset={}, priority={}",
-                                   params.id, params.base_addr, params.size, params.use_offset, params.priority);
+            SCP_INFO(this->name())
+            ("Processing target {}: base_addr={:#x}, size={:#x}, use_offset={}, priority={}", params.id,
+             params.base_addr, params.size, params.use_offset, params.priority);
             m_targets.push_back(new_target);
             m_target_bases.push_back(params.base_addr);
             m_target_sizes.push_back(params.size);

@@ -126,7 +126,7 @@ class router : public sc_core::sc_module, public gs::router_if<BUSWIDTH>
      * This implementation provides O(log n) address lookups using a single std::map with automatic
      * region splitting to handle overlapping memory regions. When overlapping regions are added,
      * the map automatically splits them into non-overlapping segments and resolves conflicts
-     * based on priority (lower numeric value = higher priority).
+     * based on priority (higher numeric value = higher priority).
      *
      * Key features:
      * - Single unified map instead of multiple priority-based maps
@@ -167,7 +167,7 @@ class router : public sc_core::sc_module, public gs::router_if<BUSWIDTH>
          * 1. Finding all existing regions that overlap with the new region
          * 2. Creating a unified list of all intervals (new + existing)
          * 3. Using boundary-based segmentation to split overlapping areas
-         * 4. Resolving conflicts by priority (lower number = higher priority)
+         * 4. Resolving conflicts by priority (higher number = higher priority)
          * 5. Creating non-overlapping regions in the final map
          *
          * Time complexity: O(k log k) where k is the number of overlapping regions
@@ -200,7 +200,7 @@ class router : public sc_core::sc_module, public gs::router_if<BUSWIDTH>
             struct Interval {
                 uint64_t start, end;
                 std::shared_ptr<TargetInfoType> target;
-                uint32_t priority;
+                int priority;
 
                 Interval(uint64_t s, uint64_t e, std::shared_ptr<TargetInfoType> t)
                     : start(s), end(e), target(t), priority(t->priority)
@@ -236,12 +236,12 @@ class router : public sc_core::sc_module, public gs::router_if<BUSWIDTH>
 
                 // Find the highest priority target for this segment
                 std::shared_ptr<TargetInfoType> best_target = nullptr;
-                uint32_t best_priority = UINT32_MAX;
+                int best_priority = 0;
 
                 for (const Interval& interval : intervals) {
                     // Check if this interval covers the current segment
                     if (interval.start <= seg_start && interval.end >= seg_end) {
-                        if (interval.priority < best_priority) {
+                        if (!best_target || interval.priority > best_priority) {
                             best_priority = interval.priority;
                             best_target = interval.target;
                         }
@@ -553,8 +553,7 @@ private:
             break;
         }
 
-        info << " address:"
-             << "0x" << std::hex << trans.get_address();
+        info << " address:" << "0x" << std::hex << trans.get_address();
         info << " len:" << trans.get_data_length();
         unsigned char* ptr = trans.get_data_ptr();
         if ((trans.get_command() == tlm::TLM_READ_COMMAND && trans.get_response_status() == tlm::TLM_OK_RESPONSE) ||
@@ -673,6 +672,17 @@ private:
         }
 
         stamp_txn(id, trans);
+        struct transaction_guard {
+            router& owner;
+            tlm::tlm_generic_payload& txn;
+            const sc_dt::uint64 address;
+            const int id;
+            ~transaction_guard()
+            {
+                txn.set_address(address);
+                owner.unstamp_txn(id, txn);
+            }
+        } guard{ *this, trans, addr, id };
         if (!ti->chained) {
             SCP_TRACE((D[ti->index]), ti->name) << "Start b_transport :" << txn_tostring(ti.get(), trans);
         }
@@ -686,7 +696,6 @@ private:
         if (!ti->chained) {
             SCP_TRACE((D[ti->index]), ti->name) << "Completed b_transport :" << txn_tostring(ti.get(), trans);
         }
-        unstamp_txn(id, trans);
     }
 
     /**
@@ -706,6 +715,11 @@ private:
         lazy_initialize();
 
         sc_dt::uint64 addr = trans.get_address();
+        struct address_guard {
+            tlm::tlm_generic_payload& txn;
+            const sc_dt::uint64 address;
+            ~address_guard() { txn.set_address(address); }
+        } guard{ trans, addr };
         auto ti = decode_address(trans);
         if (!ti) {
             trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
@@ -964,11 +978,10 @@ private:
             ti_ptr->size = gs::cci_get<uint64_t>(m_broker, name + ".size");
             ti_ptr->use_offset = gs::cci_get_d<bool>(m_broker, name + ".relative_addresses", true);
             ti_ptr->chained = gs::cci_get_d<bool>(m_broker, name + ".chained", false);
-            ti_ptr->priority = gs::cci_get_d<uint32_t>(m_broker, name + ".priority", 0);
+            ti_ptr->priority = gs::cci_get_d<int>(m_broker, name + ".priority", 0);
 
             SCP_INFO((D[ti_ptr->index]), ti_ptr->name)
-                << "Address map " << ti_ptr->name << " at address "
-                << "0x" << std::hex << ti_ptr->address << " size "
+                << "Address map " << ti_ptr->name << " at address " << "0x" << std::hex << ti_ptr->address << " size "
                 << "0x" << std::hex << ti_ptr->size << (ti_ptr->use_offset ? " (with relative address) " : " ")
                 << "priority : " << ti_ptr->priority;
             if (ti_ptr->chained) SCP_DEBUG(())("{} is chained so debug will be suppressed", ti_ptr->name);
@@ -979,8 +992,8 @@ private:
                 std::string alias_name = ti_ptr->name + ".aliases." + n;
                 uint64_t address = gs::cci_get<uint64_t>(m_broker, alias_name + ".address");
                 uint64_t size = gs::cci_get<uint64_t>(m_broker, alias_name + ".size");
-                SCP_INFO((D[ti_ptr->index]), ti_ptr->name)("Adding alias {} {:#x} (size: {})", alias_name, address,
-                                                           size);
+                SCP_INFO((D[ti_ptr->index]), ti_ptr->name)
+                ("Adding alias {} {:#x} (size: {})", alias_name, address, size);
 
                 // Create a new shared_ptr for the alias, copying from the current ti_ptr state
                 std::shared_ptr<target_info> alias_ti_ptr = std::make_shared<target_info>(*ti_ptr);
@@ -1039,7 +1052,10 @@ public:
 public:
     /// @brief Destructor for the router module.
     /// Cleans up any remaining PathIDExtension objects in the pool.
-    ~router() { m_pathIDPool.clear(); }
+    ~router()
+    {
+        for (auto* extension : m_pathIDPool) delete extension;
+    }
 
     /**
      * @brief Adds a target to the router's address map.
@@ -1051,10 +1067,9 @@ public:
      * @param address The base address of the target.
      * @param size The size of the target's address range.
      * @param masked Boolean indicating if relative addresses should be used (defaults to true).
-     * @param priority unsigned int priority, lower values have higher priorities
+     * @param priority signed priority; positive values are stronger than baseline zero
      */
-    void add_target(TargetSocket& t, const uint64_t address, uint64_t size, bool masked = true,
-                    unsigned int priority = 0)
+    void add_target(TargetSocket& t, const uint64_t address, uint64_t size, bool masked = true, int priority = 0)
     {
         std::string s = gs::router_if<BUSWIDTH>::nameFromSocket(t.get_base_export().name());
         if (!m_broker.has_preset_value(s + ".address")) {

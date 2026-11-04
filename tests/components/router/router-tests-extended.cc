@@ -50,9 +50,9 @@ public:
     void before_end_of_elaboration() override
     {
         // Setup two targets with overlapping address ranges but different priorities
-        // Lower priority value means higher actual priority (0 is highest)
-        setup_target(0, 0x1000, 0x200, true, 10); // ID 0, base 0x1000, size 0x200, lower priority
-        setup_target(1, 0x1050, 0x100, true, 0);  // ID 1, base 0x1050, size 0x100, HIGHER priority
+        // Higher priority value means higher actual priority (0 beats negative values)
+        setup_target(0, 0x1000, 0x200, true, -10); // ID 0, base 0x1000, size 0x200, lower priority
+        setup_target(1, 0x1050, 0x100, true, 0);   // ID 1, base 0x1050, size 0x100, HIGHER priority
         // Call parent to process the targets
         RouterTestBenchSimple::before_end_of_elaboration();
     }
@@ -331,8 +331,7 @@ int sc_main(int argc, char* argv[])
                                     cci::cci_value(std::numeric_limits<uint64_t>::max()), originator);
         broker.set_preset_cci_value(default_target_socket_name + ".relative_addresses", cci::cci_value(true),
                                     originator);
-        broker.set_preset_cci_value(default_target_socket_name + ".priority",
-                                    cci::cci_value(static_cast<unsigned int>(100)),
+        broker.set_preset_cci_value(default_target_socket_name + ".priority", cci::cci_value(-100),
                                     originator); // Lower priority
     }
 

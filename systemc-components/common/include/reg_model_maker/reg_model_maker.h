@@ -15,10 +15,9 @@
 #include <zip_loader.h>
 #include <gs_memory.h>
 #include <router.h>
-#include <reg_router.h>
 #include <registers.h>
+#include <register_model.h>
 #include <tlm_sockets_buswidth.h>
-#include <ports/initiator-signal-socket.h>
 #include <cstdlib>
 #include <set>
 #include <string>
@@ -26,8 +25,8 @@
 #include <vector>
 #include <limits>
 #include <map>
-#include <list>
 #include <algorithm>
+#include <optional>
 
 namespace gs {
 
@@ -36,7 +35,6 @@ class json_zip_archive
     SCP_LOGGER((), "json_zip_archive");
 
     std::set<std::string> m_loaded;
-    std::vector<uint8_t> m_bin_file_data;
     zip_t* m_archive;
     bool m_base_address_captured;
     uint64_t m_base_address;
@@ -189,18 +187,18 @@ public:
                 cci_set(broker, sc_name + ".reg_memory.target_socket.size", m_max_size);
                 cci_set(broker, sc_name + ".reg_memory.target_socket.relative_addresses", true);
             }
-            cci_set(broker, sc_name + ".reg_router.target_socket.address",
-                    (is_platform_model || is_platform) ? m_parent_model_base_addr : 0);
-            cci_set(broker, sc_name + ".reg_router.target_socket.size", m_max_size);
-            cci_set(broker, sc_name + ".reg_router.target_socket.priority", 1024);
-            cci_set(broker, sc_name + ".reg_router.target_socket.relative_addresses", true);
-            cci_set(broker, sc_name + ".reg_router.lazy_init", true);
         }
         return true;
     }
 
     uint64_t get_base_address() const { return m_base_address; }
     uint64_t get_parent_module_address() { return m_parent_model_base_addr; }
+    uint64_t get_model_address() const { return m_is_platform_model ? m_parent_model_base_addr : 0; }
+    uint64_t get_model_mapped_address() const
+    {
+        return (m_is_platform_model || m_is_platform_top) ? m_parent_model_base_addr : 0;
+    }
+    uint64_t get_model_size() const { return m_max_size; }
     bool is_platform_top() { return m_is_platform_top; }
     bool is_platform_model() { return m_is_platform_model; }
     void set_memory(std::shared_ptr<gs::gs_memory<>> _memory) { m_memory = _memory; }
@@ -218,8 +216,9 @@ public:
                     gs::router<>* _router, gs::gs_memory<>* _reg_memory)
         : m_router(nullptr)
         , m_reg_memory(nullptr)
-        , m_reg_router(nullptr)
-        , m_reset("reset")
+        , m_model_address(jza.get_model_address())
+        , m_model_size(jza.get_model_size())
+        , m_model_mapped_address(jza.get_model_mapped_address())
         , m_is_platform_mod(_router && _reg_memory)
         , m_is_platform_top(jza.is_platform_top())
     {
@@ -230,7 +229,6 @@ public:
             if (!m_is_platform_top) {
                 m_reg_memory = std::make_shared<gs::gs_memory<>>("reg_memory");
                 m_router = std::make_shared<gs::router<>>("router");
-                m_reset.bind(m_reg_memory->reset);
                 bin_file_name = jza.get_bin_file_name();
                 zip_archive_name = jza.get_archive_name();
                 zip_archive_ptr = jza.get_zip_archive_ptr();
@@ -260,19 +258,20 @@ public:
     {
         m_mod_addr_name_map.insert(item);
     }
-    void init_reg_router()
+    void init_register_model()
     {
-        if (m_reg_memory && !m_reg_router) {
-            m_reg_router = std::make_unique<gs::reg_router<>>("reg_router", m_mod_addr_name_map);
-            m_reg_router->initiator_socket(m_reg_memory->socket);
-            if (!m_is_platform_mod) m_router->initiator_socket(m_reg_router->target_socket);
+        if (!m_register_model) {
+            // The legacy module socket carries backing addresses, including platform relocation.
+            m_register_model = std::make_unique<gs::register_model>(
+                "reg_router", *m_reg_memory, m_model_address, m_model_size, !m_is_platform_mod, m_mod_addr_name_map,
+                gs::register_model::access_callback{}, -1024, true, m_model_mapped_address);
+            if (!m_is_platform_mod) m_router->initiator_socket(m_register_model->target_socket());
         }
     }
-    ~base_components() {}
     void reset(bool value)
     {
         if (m_reg_memory && !m_is_platform_mod && !m_is_platform_top) {
-            m_reset->write(value);
+            m_register_model->reset(value);
             if (value) {
                 m_reg_memory->load.zip_file_load(zip_archive_ptr, zip_archive_name, 0, bin_file_name);
             }
@@ -281,10 +280,12 @@ public:
 
     std::shared_ptr<gs::router<>> m_router;
     std::shared_ptr<gs::gs_memory<>> m_reg_memory;
-    std::unique_ptr<gs::reg_router<>> m_reg_router;
+    std::unique_ptr<gs::register_model> m_register_model;
 
 private:
-    InitiatorSignalSocket<bool> m_reset;
+    uint64_t m_model_address;
+    uint64_t m_model_size;
+    uint64_t m_model_mapped_address;
     std::map<uint64_t, std::pair<uint64_t, std::string>> m_mod_addr_name_map;
     bool m_is_platform_mod;
     bool m_is_platform_top;
@@ -303,23 +304,10 @@ protected:
     std::shared_ptr<base_components> m_sh_comp;
     sc_core::sc_vector<gs::gs_memory<>> memories;
     sc_core::sc_vector<json_module_base> sub_modules;
-    uint32_t m_bound_regs_num;
+    std::optional<gs::register_model::binding_group> m_bindings;
     bool m_is_platform_mod;
 
 protected:
-    template <class T>
-    void cci_set(std::string n, T value)
-    {
-        auto handle = m_broker.get_param_handle(n);
-        if (handle.is_valid())
-            handle.set_cci_value(cci::cci_value(value));
-        else if (!m_broker.has_preset_value(n)) {
-            m_broker.set_preset_cci_value(n, cci::cci_value(value));
-        } else {
-            SCP_FATAL(())("Trying to re-set a value? {}", n);
-        }
-    }
-
     template <typename T>
     T cci_get(std::string n)
     {
@@ -341,7 +329,6 @@ public:
         , m_jza(jza)
         , m_broker(cci::cci_get_broker())
         , m_sh_comp(sh_comp)
-        , m_bound_regs_num(0)
         , m_is_platform_mod(false)
     {
         SCP_TRACE(())("Constructor of {}", sc_core::sc_module::name());
@@ -396,12 +383,12 @@ public:
             });
         }
         if (top) {
-            m_sh_comp->init_reg_router();
+            m_sh_comp->init_register_model();
         }
     }
 
     template <class TYPE>
-    void bind_reg(gs::gs_register<TYPE>& reg, uint32_t priority = 0)
+    void bind_reg(gs::gs_register<TYPE>& reg, int priority = 0)
     {
         std::string path = reg.get_path();
         std::string self_full_name = std::string(sc_core::sc_module::name());
@@ -415,39 +402,29 @@ public:
         SCP_TRACE(())
         ("Binding {} in {}", reg.get_regname(),
          std::string(sc_core::sc_module::name()) + ((!parent.empty()) ? "." + parent : ""));
-        reg.initiator_socket.bind(m_sh_comp->m_reg_memory->socket);
         std::string mod_address_str = std::string(sc_core::sc_module::name()) + "." +
                                       ((!parent.empty()) ? parent + "." : "") + "target_socket.address";
-        std::string reg_target_socket_name = std::string(this->name()) + "." + ((!parent.empty()) ? parent + "." : "") +
-                                             reg.get_regname() + ".target_socket";
-        uint64_t parent_address = m_jza.get_parent_module_address();
-        uint64_t mod_address = cci_get<uint64_t>(mod_address_str) - m_jza.get_base_address();
-        std::string reg_address_str = reg_target_socket_name + ".address";
-        uint64_t new_reg_offset = reg.get_offset() + mod_address + (m_jza.is_platform_model() ? parent_address : 0);
-        cci_set<uint64_t>(reg_address_str, new_reg_offset);
-        if constexpr (gs::is_gs_bank<TYPE>::value) {
-            auto encode_dims = [](const std::vector<uint64_t>& values) {
-                std::string result;
-                for (size_t i = 0; i < values.size(); ++i) {
-                    if (i != 0) result += ',';
-                    result += std::to_string(values[i]);
-                }
-                return result;
-            };
-            cci_set<std::string>(reg_target_socket_name + ".dim_strides", encode_dims(reg.get_dim_strides()));
-            cci_set<std::string>(reg_target_socket_name + ".dim_counts", encode_dims(reg.get_dim_counts()));
+        const uint64_t mod_address = cci_get<uint64_t>(mod_address_str);
+        if (mod_address < m_jza.get_base_address()) {
+            throw std::invalid_argument(mod_address_str + ": module precedes archive base address");
         }
-        if (priority != 0) cci_set<uint32_t>(reg_target_socket_name + ".priority", priority);
-        m_sh_comp->m_reg_router->initiator_socket.bind(reg);
-        m_sh_comp->m_reg_router->rename_last(reg_target_socket_name);
-        m_bound_regs_num++;
+        uint64_t base = mod_address - m_jza.get_base_address();
+        if (m_jza.is_platform_model()) {
+            const uint64_t parent_address = m_jza.get_parent_module_address();
+            if (base > std::numeric_limits<uint64_t>::max() - parent_address) {
+                throw std::invalid_argument(mod_address_str + ": module relocation overflows address space");
+            }
+            base += parent_address;
+        }
+        if (!m_bindings) m_bindings.emplace(*m_sh_comp->m_register_model);
+        m_bindings->bind_at(reg, base, priority);
     }
 
-    uint32_t get_num_of_bound_regs() const { return m_bound_regs_num; }
+    uint32_t get_num_of_bound_regs() const { return m_bindings ? m_bindings->size() : 0; }
 
     void log_end_of_binding_msg(const std::string& gen_name)
     {
-        SCP_DEBUG(()) << gen_name << ": Constructed and bound " << m_bound_regs_num << " registers.";
+        SCP_DEBUG(()) << gen_name << ": Constructed and bound " << get_num_of_bound_regs() << " registers.";
     }
 
     void reset(bool value) { m_sh_comp->reset(value); }
@@ -456,7 +433,7 @@ public:
 class json_module : public json_module_base
 {
 public:
-    tlm_utils::multi_passthrough_target_socket<json_module, DEFAULT_TLM_BUSWIDTH> target_socket;
+    gs::register_model::target_socket_bridge target_socket;
 
     ~json_module() = default;
 
@@ -466,9 +443,9 @@ public:
         : json_module_base(_name, jza, _router, _reg_memory, sh_comp, _node, _path, top), target_socket("target_socket")
     {
         if (!_router && !_reg_memory) {
-            target_socket.bind(m_sh_comp->m_router->target_socket);
+            target_socket.forward_to(m_sh_comp->m_router->target_socket);
         } else {
-            target_socket.bind(m_sh_comp->m_reg_router->target_socket);
+            target_socket.forward_to(m_sh_comp->m_register_model->target_socket());
         }
     }
 };
@@ -476,9 +453,9 @@ public:
 class json_module_top : public json_module_base
 {
 private:
-    bool is_json_loaded_ok(json_zip_archive& jza, cci::cci_broker_handle broker, std::string sc_name,
-                           std::shared_ptr<gs::router<>> _router, std::shared_ptr<gs::gs_memory<>> _memory,
-                           std::string _path, rapidjson::Value* _node)
+    static bool is_json_loaded_ok(json_zip_archive& jza, cci::cci_broker_handle broker, std::string sc_name,
+                                  std::shared_ptr<gs::router<>> _router, std::shared_ptr<gs::gs_memory<>> _memory,
+                                  std::string _path, rapidjson::Value* _node)
     {
         bool loaded_ok = jza.json_read_cci(broker, sc_name, false, _router, _memory, true, _path, _node, true);
         sc_assert(loaded_ok);
