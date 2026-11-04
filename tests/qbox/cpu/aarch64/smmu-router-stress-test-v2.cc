@@ -449,9 +449,9 @@ private:
 class CpuArmCortexA53SMMUStressTestV2 : public TestBench, public CpuTesterCallbackIface
 {
 public:
-    static constexpr uint16_t MAX_ITERATIONS = 0x7ff; // Limited to 16-bit for ARM64 movz instruction
+    static constexpr uint16_t MAX_ITERATIONS = 0xfff; // Limited to 16-bit for ARM64 movz instruction
     static constexpr uint64_t PATTERN_SIZE = 16;
-    static constexpr unsigned BOUNDARY_BYTES = 80;
+    static constexpr unsigned BOUNDARY_BYTES = 256;
     sc_core::sc_time TEST_DURATION = sc_core::sc_time(30, sc_core::SC_SEC);
 
     // Memory layout - REORGANIZED: Everything in first 1GB with 1:1 mapping
@@ -471,8 +471,8 @@ public:
     static constexpr uint64_t VIRTUAL_TEST_ADDR = 0x80000000ULL; // 12GB virtual address
     static constexpr uint64_t
         PAGE_TABLE_BASE = 0x10000000; // Page tables: 0x10000000 - 0x1007FFFF (512KB for up to 32 CPUs)
-    static constexpr uint64_t REGION_BASE = 0x10080000; // Test regions: 0x10080000+ in 8KB blocks (after page tables)
-    static constexpr uint64_t REGION_SIZE = 0x2000;     // 8KB regions (two pages each)
+    static constexpr uint64_t REGION_BASE = 0x10080000; // Test regions after page tables
+    static constexpr uint64_t REGION_SIZE = 0x4000;     // 16KB regions (four pages each)
     static constexpr uint64_t PAGE_SIZE = 0x1000;       // 4KB pages
 
     SCP_LOGGER();
@@ -530,9 +530,11 @@ private:
 
     // SMMU Global Register Offsets (from SMMU_REG_ADDR)
     static constexpr uint32_t SMMU_SCR0_OFFSET = 0x0;
+    static constexpr uint32_t SMMU_NSCR0_OFFSET = 0x400;
     static constexpr uint32_t SMMU_SMR_BASE_OFFSET = 0x800;
     static constexpr uint32_t SMMU_S2CR_BASE_OFFSET = 0xc00;
     static constexpr uint32_t SMMU_CBAR_BASE_OFFSET = 0x1000;
+    static constexpr uint32_t SMMU_CBA2R_BASE_OFFSET = 0x1800;
 
     // Context Bank Page Layout
     static constexpr uint32_t CB_PAGE_OFFSET = 16; // CBs start at page 16 (0x10000)
@@ -611,7 +613,7 @@ public:
         , m_smmu("smmu")
         , m_global_router("global_router")
         , m_tester_controller("tester_controller", p_num_cpu.get_value(),
-                              std::max(3u, static_cast<uint32_t>(p_num_cpu.get_value() * 3)), MAX_ITERATIONS)
+                              std::max(8u, static_cast<uint32_t>(p_num_cpu.get_value() * 8)), MAX_ITERATIONS)
         , m_memory_accessor("memory_accessor")
     {
         using tlm_utils::tlm_quantumkeeper;
@@ -631,7 +633,7 @@ public:
         sc_core::sc_time global_quantum(p_quantum_ns, sc_core::SC_NS);
         tlm_quantumkeeper::set_global_quantum(global_quantum);
 
-        m_num_regions = std::max(3u, static_cast<uint32_t>(p_num_cpu.get_value() * 3));
+        m_num_regions = std::max(8u, static_cast<uint32_t>(p_num_cpu.get_value() * 8));
 
         SCP_INFO(()) << "Creating SMMU Stress Test V2 with " << p_num_cpu.get_value() << " CPUs, " << m_num_regions
                      << " regions";
@@ -664,7 +666,7 @@ public:
             // High VA TBU for each CPU - unique StreamID per CPU
             char tbu_high_va_name[32];
             std::snprintf(tbu_high_va_name, sizeof(tbu_high_va_name), "tbu_high_va_%d", i);
-            m_tbus_high_va[i] = new gs::smmu500_tbu<>(tbu_high_va_name, &m_smmu);
+            m_tbus_high_va[i] = new gs::smmu500_tbu<>(tbu_high_va_name, &m_smmu, i % 2 == 0 ? m_inst_a : m_inst_b);
             uint32_t high_va_topology_id = i + 1; // StreamID 1,2,3... for high VA
             m_tbus_high_va[i]->p_topology_id = high_va_topology_id;
             m_tbus_high_va[i]->p_topology_id.set_value(high_va_topology_id);
@@ -764,8 +766,10 @@ public:
 
         SCP_INFO(()) << "Configuring SMMU for tester-controlled operation";
 
-        // First: clear CLIENTPD in SMMU_SCR0 (enable SMMU translation)
+        // Enable translation for both security states. CPU accesses arrive as
+        // Non-secure transactions and therefore use NSCR0.
         write_smmu_register(SMMU_REG_ADDR + SMMU_SCR0_OFFSET, 0x0);
+        write_smmu_register(SMMU_REG_ADDR + SMMU_NSCR0_OFFSET, 0x0);
 
         // Configure SMRs and S2CRs for NEW DUAL-TBU ARCHITECTURE
         // SHARED IDENTITY: All identity TBUs share StreamID 0 → CB0
@@ -777,7 +781,7 @@ public:
         write_smmu_register(smr0_addr, smr0_value);
 
         uint32_t s2cr0_addr = SMMU_REG_ADDR + SMMU_S2CR_BASE_OFFSET;
-        uint32_t s2cr0_value = (0x1 << 16) | (0 << 0); // TYPE=1, CBNDX=0
+        uint32_t s2cr0_value = (0x0 << 16) | (0 << 0); // TYPE=0 (Translation), CBNDX=0
         write_smmu_register(s2cr0_addr, s2cr0_value);
 
         SCP_INFO(()) << "SMR[0]/S2CR[0]: StreamID=0 -> CB0 (SHARED identity for ALL CPUs)";
@@ -792,7 +796,7 @@ public:
             write_smmu_register(smr_addr, smr_value);
 
             uint32_t s2cr_addr = SMMU_REG_ADDR + SMMU_S2CR_BASE_OFFSET + (high_va_stream_id * 4);
-            uint32_t s2cr_value = (0x1 << 16) | (high_va_cb << 0); // TYPE=1, CBNDX=cb
+            uint32_t s2cr_value = (0x0 << 16) | (high_va_cb << 0); // TYPE=0 (Translation), CBNDX=cb
             write_smmu_register(s2cr_addr, s2cr_value);
 
             SCP_INFO(()) << "SMR[" << high_va_stream_id << "]/S2CR[" << high_va_stream_id
@@ -967,6 +971,10 @@ public:
         uint32_t cbar_addr = SMMU_REG_ADDR + SMMU_CBAR_BASE_OFFSET + (cb * 4);
         write_smmu_register(cbar_addr, (1 << 16)); // TYPE=1
 
+        // Select the AArch64 context-bank format used by the 64-bit page tables below.
+        uint32_t cba2r_addr = SMMU_REG_ADDR + SMMU_CBA2R_BASE_OFFSET + (cb * 4);
+        write_smmu_register(cba2r_addr, 1u); // VA64=1
+
         // Configure TTBR0 with the page table address
         write_smmu_register(cb_base + CB_TTBR0_LOW_OFFSET, static_cast<uint32_t>(l0_table_addr & 0xFFFFFFFF));
         write_smmu_register(cb_base + CB_TTBR0_HIGH_OFFSET, static_cast<uint32_t>((l0_table_addr >> 32) & 0xFFFFFFFF));
@@ -994,14 +1002,14 @@ public:
         uint64_t physical_addr = CpuArmCortexA53SMMUStressTestV2::REGION_BASE +
                                  (region_id * CpuArmCortexA53SMMUStressTestV2::REGION_SIZE);
 
-        SCP_INFO(()) << "Clearing region " << region_id << " (2-PAGE) at physical address 0x" << std::hex
+        SCP_INFO(()) << "Clearing region " << region_id << " (4-PAGE) at physical address 0x" << std::hex
                      << physical_addr;
 
         const uint32_t words_to_clear = CpuArmCortexA53SMMUStressTestV2::BOUNDARY_BYTES / 8;
         const uint32_t num_pages = CpuArmCortexA53SMMUStressTestV2::REGION_SIZE /
                                    CpuArmCortexA53SMMUStressTestV2::PAGE_SIZE;
 
-        // Loop over all pages in the region (2 pages for 8KB regions)
+        // Loop over all pages in the region (4 pages for 16KB regions)
         for (uint32_t page_num = 0; page_num < num_pages; ++page_num) {
             uint64_t page_physical_addr = physical_addr + (page_num * CpuArmCortexA53SMMUStressTestV2::PAGE_SIZE);
 
@@ -1068,7 +1076,7 @@ public:
         // Calculate number of pages to map
         uint32_t num_pages = size / PAGE_SIZE;
 
-        SCP_INFO(()) << "🔍 TWO-PAGE MAPPING: Creating page tables for CPU " << cpu << " (" << num_pages << " pages)";
+        SCP_INFO(()) << "🔍 FOUR-PAGE MAPPING: Creating page tables for CPU " << cpu << " (" << num_pages << " pages)";
         SCP_INFO(()) << "  - High VA CB page table offset: 0x" << std::hex << (pt_addrs.l0 - PAGE_TABLE_BASE);
         SCP_INFO(()) << "  - L0 table: 0x" << std::hex << l0_table_addr;
         SCP_INFO(()) << "  - L1 table: 0x" << std::hex << l1_table_addr;
@@ -1076,7 +1084,7 @@ public:
         SCP_INFO(()) << "  - L3 table: 0x" << std::hex << l3_table_addr;
 
         // Map each page in the region
-        // For 2-page regions: L3[0] maps page 0, L3[1] maps page 1
+        // For 4-page regions: L3[0] maps page 0 through L3[3] maps page 3
         for (uint32_t page = 0; page < num_pages; ++page) {
             uint64_t page_pa = physical_addr + (page * PAGE_SIZE);
 
@@ -1101,7 +1109,7 @@ public:
             }
         }
 
-        SCP_INFO(()) << "✅ TWO-PAGE mapping complete for CPU " << cpu << " (region "
+        SCP_INFO(()) << "✅ FOUR-PAGE mapping complete for CPU " << cpu << " (region "
                      << ((physical_addr - REGION_BASE) / REGION_SIZE) << ")";
 
         // CRITICAL FIX: Invalidate SMMU TLB after page table update
@@ -1199,7 +1207,7 @@ public:
 
     // CpuTesterCallbackIface implementation (not used in V2)
     virtual void map_target(tlm::tlm_target_socket<DEFAULT_TLM_BUSWIDTH>& s, uint64_t addr, uint64_t size) override {}
-    virtual void map_irqs_to_cpus(sc_core::sc_vector<InitiatorSignalSocket<bool> >& irqs) override {}
+    virtual void map_irqs_to_cpus(sc_core::sc_vector<InitiatorSignalSocket<bool>>& irqs) override {}
     virtual uint64_t mmio_read(int id, uint64_t addr, size_t len) override { return 0; }
     virtual bool dmi_request(int id, uint64_t addr, size_t len, tlm::tlm_dmi& ret) override { return false; }
     virtual void mmio_write(int id, uint64_t addr, uint64_t data, size_t len) override {}
@@ -1209,8 +1217,7 @@ public:
         SCP_WARN(()) << "SMMU Stress Test V2 completed"
                      << "\nFinal statistics:" << "\n  - Total iterations: " << m_tester_controller.m_global_iterations
                      << "/" << MAX_ITERATIONS << "\n  - CPUs: " << p_num_cpu.get_value()
-                     << "\n  - Memory regions: " << m_num_regions << "\n  - Pattern size: " << PATTERN_SIZE
-                     << " * 8 bytes";
+                     << "\n  - Memory regions: " << m_num_regions << "\n  - Boundary bytes: " << BOUNDARY_BYTES;
     }
 };
 
@@ -1278,14 +1285,14 @@ bool SMMUTesterController::verify_region_pattern(uint32_t cpu_id, uint32_t regio
     uint64_t physical_addr = CpuArmCortexA53SMMUStressTestV2::REGION_BASE +
                              (region_id * CpuArmCortexA53SMMUStressTestV2::REGION_SIZE);
 
-    SCP_INFO(()) << "Verifying region " << region_id << " with ENHANCED 2-PAGE pattern at PA=0x" << std::hex
+    SCP_INFO(()) << "Verifying region " << region_id << " with ENHANCED 4-PAGE pattern at PA=0x" << std::hex
                  << physical_addr;
 
-    const uint32_t words_to_check = 10; // Check 10 words (80 bytes) at each boundary
+    const uint32_t words_to_check = CpuArmCortexA53SMMUStressTestV2::BOUNDARY_BYTES / 8;
     const uint32_t num_pages = CpuArmCortexA53SMMUStressTestV2::REGION_SIZE /
                                CpuArmCortexA53SMMUStressTestV2::PAGE_SIZE;
 
-    // Loop over all pages in the region (2 pages for 8KB regions)
+    // Loop over all pages in the region (4 pages for 16KB regions)
     for (uint32_t page_num = 0; page_num < num_pages; ++page_num) {
         uint64_t page_physical_addr = physical_addr + (page_num * CpuArmCortexA53SMMUStressTestV2::PAGE_SIZE);
 
@@ -1338,7 +1345,7 @@ bool SMMUTesterController::verify_region_pattern(uint32_t cpu_id, uint32_t regio
         SCP_INFO(()) << "    ✅ Page " << page_num << " verified successfully";
     }
 
-    SCP_INFO(()) << "✅ Region " << region_id << " ENHANCED 2-PAGE pattern verification successful"
+    SCP_INFO(()) << "✅ Region " << region_id << " ENHANCED 4-PAGE pattern verification successful"
                  << "  - CPU=" << cpu_id << " Region=" << region_id << " - All " << num_pages << " pages verified";
     return true;
 }
