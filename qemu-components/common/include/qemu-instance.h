@@ -36,6 +36,7 @@ class QemuDeviceBaseIF
 {
 public:
     virtual bool can_run() { return true; }
+    virtual void start_coroutine() {}
     SCP_LOGGER();
 };
 
@@ -94,6 +95,8 @@ private:
     cci::cci_broker_handle m_conf_broker;
 
     bool m_running = false;
+    bool m_coroutine_runner_claimed = false;
+    gs::async_event m_coroutine_kick_ev;
     SCP_LOGGER();
 
 public:
@@ -110,6 +113,7 @@ public:
         std::lock_guard<std::mutex> lock(m_lock);
         devices.push_back(d);
     }
+
     void del_dev(QemuDeviceBaseIF* d)
     {
         if (m_running) {
@@ -117,6 +121,23 @@ public:
             devices.remove(d);
         }
     }
+
+    bool claim_coroutine_runner()
+    {
+        std::lock_guard<std::mutex> lock(m_lock);
+
+        if (m_coroutine_runner_claimed) {
+            return false;
+        }
+        m_coroutine_runner_claimed = true;
+
+        return true;
+    }
+
+    void notify_coroutine_runner() { m_coroutine_kick_ev.async_notify(); }
+
+    gs::async_event& coroutine_runner_event() { return m_coroutine_kick_ev; }
+
     bool can_run()
     {
         if (!m_running) return false;
@@ -178,6 +199,7 @@ protected:
 
     cci::cci_param<std::string> p_args;
     std::string m_display_argument;
+    cci::cci_param<std::string> p_display;
 
     cci::cci_param<std::string> p_accel;
     cci::cci_param<std::string> p_whpx_args;
@@ -189,7 +211,7 @@ protected:
         m_inst.push_qemu_arg("libqbox"); /* argv[0] */
         m_inst.push_qemu_arg({
             "-M", "none",       /* no machine */
-            "-m", "0",       /* Guest memory is managed by gs_memory module */
+            "-m", "0",          /* Guest memory is managed by gs_memory module */
             "-monitor", "null", /* no monitor */
             "-serial", "null",  /* no serial backend */
         });
@@ -320,6 +342,7 @@ public:
         , m_conf_broker(cci::cci_get_broker())
         , m_inst(loader, t)
         , m_dmi_mgr(m_inst)
+        , m_coroutine_kick_ev(false)
         , reset("reset")
         , p_tcg_mode("tcg_mode", "MULTI", "The TCG mode required, SINGLE, COROUTINE or MULTI")
         , p_sync_policy("sync_policy", "multithread-quantum", "Synchronization Policy to use")
@@ -327,6 +350,7 @@ public:
         , p_icount("icount", false, "Enable virtual instruction counter")
         , p_icount_mips("icount_mips_shift", 0, "The MIPS shift value for icount mode (1 insn = 2^(mips) ns)")
         , p_args("qemu_args", "", "additional space separated arguments")
+        , p_display("display", "", "QEMU display backend. Keep empty for display=none")
         , p_accel("accel", "tcg", "Virtualization accelerator")
         , p_whpx_args("whpx_args", "", "Additional WHPX accelerator properties (e.g. gicd-base-address=0x17000000)")
         , p_time_sync_strategy("time_sync_strategy", "quantum_keeper",
@@ -356,6 +380,10 @@ public:
 
         /* Last: the destructor, which unregisters, only runs for a fully constructed object */
         qemu_instance_order::register_instance(this);
+
+        if (!p_display.get_value().empty()) {
+            set_display_arg(p_display.get_value());
+        }
     }
 
     QemuInstance(const QemuInstance&) = delete;
@@ -414,8 +442,8 @@ public:
      */
     void set_vnc_args(const std::string& vnc_options)
     {
-            m_inst.push_qemu_arg("-vnc");
-            m_inst.push_qemu_arg(vnc_options.c_str());
+        m_inst.push_qemu_arg("-vnc");
+        m_inst.push_qemu_arg(vnc_options.c_str());
     }
 
     /**
@@ -641,7 +669,18 @@ private:
             init(); // dlsyms libqemu_init; plugin functions are part of the returned LibQemuExports table.
         }
     }
-    void start_of_simulation(void) override { get().finish_qemu_init(); }
+    void start_of_simulation(void) override
+    {
+        if (m_tcg_mode == TCG_COROUTINE) {
+            std::lock_guard<std::mutex> lock(m_lock);
+            qemu::IothreadLockGuard iothread_lock(get());
+            for (auto* device : devices) {
+                device->start_coroutine();
+            }
+        }
+
+        get().finish_qemu_init();
+    }
 
     void reset_cb(const bool val)
     {
