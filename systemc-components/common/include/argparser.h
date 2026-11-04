@@ -80,6 +80,7 @@ protected:
         SCP_INFO(()) << "Parse command line for --gs_luafile option (" << argc << " arguments)";
 
         bool luafile_found = false;
+        char* images_dir = NULL;
         // getopt permutes argv array, so copy it to argv_cp
         std::vector<std::unique_ptr<char[]>> argv_cp;
         char* argv_cp_raw[argc];
@@ -99,7 +100,16 @@ protected:
 
         struct option long_options[] = { { "gs_luafile", required_argument, 0, 'l' }, // '--luafile filename'
                                          { "param", required_argument, 0, 'p' },      // --param foo.baa=10
+                                         { "images-dir", required_argument, 0, 'i' }, // --images-dir path
                                          { 0, 0, 0, 0 } };
+
+        // parse --images-dir first to make it available to every lua config
+        while (1) {
+            int c = getopt_long(argc, argv_cp_raw, optstring, long_options, 0);
+            if (c == EOF) break;
+            if (c == 'i') images_dir = optarg;
+        }
+        optind = 0; // reset of getopt
 
         while (1) {
             int c = getopt_long(argc, argv_cp_raw, optstring, long_options, 0);
@@ -110,7 +120,7 @@ protected:
             {
                 SCP_INFO(()) << "Option --gs_luafile with value " << optarg;
                 SCP_INFO(()) << "Lua file command line parser: parse option --gs_luafile " << optarg << std::endl;
-                lua.config(a_broker, optarg);
+                lua.config(a_broker, optarg, images_dir);
                 luafile_found = true;
                 break;
             }

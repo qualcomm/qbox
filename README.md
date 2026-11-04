@@ -549,6 +549,29 @@ cmake --build build --parallel
 ./build/platforms/platforms-vp -l platforms/ubuntu/conf_aarch64.lua
 ```
 
+## Quick Start: DragonWing SA8775P (QLI 2.0 + CDSP)
+
+See the [DragonWing guide](examples/dragonwing/README.md) for host
+requirements and QLI firmware image details. The images are external to
+QBox.
+
+```bash
+cmake -S . -B build-dragonwing -DCMAKE_BUILD_TYPE=Release \
+  -DENABLE_DRAGONWING=ON -DENABLE_PYTHON_BINDER=OFF \
+  -DLIBQEMU_TARGETS="aarch64;hexagon"
+cmake --build build-dragonwing --parallel
+
+cd build-dragonwing
+./platforms-vp -p platform.hexagon_semihosting=true \
+  --images-dir /path/to/firmware-images/exp_qli_qcow2 \
+  -l ../examples/dragonwing/configs/fw/8775/bsp/lnx/qli_2.0/conf.lua
+```
+
+`--images-dir` supplies the external firmware fallback for Lua `image_file()`
+lookups. Each lookup checks the directory of the Lua configuration first, then
+the supplied folder. It does not download images or select a default firmware
+path; pass the `exp_qli_qcow2` directory explicitly.
+
 ## Documentation
 
 - **[Configuration](docs/configuration.md)** -- CCI parameters,
@@ -581,6 +604,8 @@ cmake --build build --parallel
 
 - **[Ubuntu](docs/platforms/ubuntu.md)** -- Ubuntu Linux platform
   (AArch64 and RISC-V 64)
+- **[DragonWing SA8775P](examples/dragonwing/README.md)** -- QLI 2.0
+  Linux with two CDSP (Hexagon) subsystems
 
 ### Tutorials and Examples
 
