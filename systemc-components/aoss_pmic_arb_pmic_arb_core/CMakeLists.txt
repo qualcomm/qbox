@@ -1,0 +1,1 @@
+gs_create_dymod(aoss_pmic_arb_pmic_arb_core)

@@ -13,3 +13,10 @@ __pycache__
 .worktrees
 *.zip
 /.cache
+
+# Pre-generated register-model archives for the DragonWing (SA8775P) components
+!/examples/dragonwing/configs/fw/SA8775P.cc_config.zip
+!/systemc-components/aoss_pmic_arb_pmic_arb_core/src/*.cc_config.zip
+!/systemc-components/apss_hm_apss_shared_apss_intu/src/*.cc_config.zip
+!/systemc-components/csr/src/*.cc_config.zip
+!/systemc-components/qupv3_qupv3_se_wrapper_se0/src/*.cc_config.zip

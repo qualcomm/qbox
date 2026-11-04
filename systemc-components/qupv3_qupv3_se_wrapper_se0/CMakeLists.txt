@@ -1,0 +1,3 @@
+gs_create_dymod(qupv3_qupv3_se_wrapper_se0_uart)
+gs_create_dymod(qupv3_qupv3_se_wrapper_se0_spi)
+gs_create_dymod(qupv3_qupv3_se_wrapper_se0_i2c)
