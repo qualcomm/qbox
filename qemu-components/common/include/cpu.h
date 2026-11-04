@@ -715,14 +715,18 @@ public:
                  * serialises against that. Release it before waiting, the vCPU
                  * needs it to run the job.
                  */
-                m_inst.get().lock_iothread();
-                m_cpu.kick(); // without this kick, async_safe_run may not be called (QEMU race)
-                m_inst.get().unlock_iothread();
+                {
+                    qemu::IothreadLockGuard iothread_lock(m_inst.get());
+                    m_cpu.kick(); // without this kick, async_safe_run may not be called (QEMU race)
+                }
                 sc_core::wait(m_start_reset_done_ev);
             }
-            m_inst.get().lock_iothread();
-            socket.reset(); // remove DMI's (needs BQL for memory region updates)
-            m_inst.get().unlock_iothread();
+
+            {
+                qemu::IothreadLockGuard iothread_lock(m_inst.get());
+                socket.reset(); // remove DMI's (needs BQL for memory region updates)
+            }
+
             m_cpu.reset(false); // call the end-of-reset (which will unpause the CPU)
             m_time_sync->on_reset_finish();
             SCP_WARN(())("Finished reset");

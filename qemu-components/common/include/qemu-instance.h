@@ -11,6 +11,7 @@
 
 #include <cassert>
 #include <cstring>
+#include <mutex>
 #include <sstream>
 #include <systemc>
 
@@ -698,6 +699,22 @@ private:
         }
     }
 };
+
+namespace qemu {
+
+inline IothreadLockGuard::IothreadLockGuard(::QemuInstance& inst): IothreadLockGuard(inst.get()) {}
+
+inline IothreadLockGuard::IothreadLockGuard(::QemuInstance& inst, std::adopt_lock_t)
+    : IothreadLockGuard(inst.get(), std::adopt_lock)
+{
+}
+
+inline IothreadLockGuard IothreadLockGuard::acquire_if_unlocked(::QemuInstance& inst)
+{
+    return acquire_if_unlocked(inst.get());
+}
+
+} // namespace qemu
 
 GSC_MODULE_REGISTER(QemuInstanceManager);
 GSC_MODULE_REGISTER(QemuInstance, sc_core::sc_object*, std::string);
