@@ -53,15 +53,18 @@ connection so that external tools (for example `telnet` or
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `address` | `string` | `"127.0.0.1:4001"` | Listen/connect address in `IP:Port` format |
+| `address` | `string` | `"127.0.0.1:4001"` | Numeric IP address and port, separated by one colon |
 | `server` | `bool` | `true` | Run as TCP server when true, client when false |
 | `nowait` | `bool` | `true` | Use non-blocking mode; drop data when no peer is connected |
 | `sigquit` | `bool` | `false` | When true, byte `0x1c` in the stream triggers `sc_stop()` |
 
 When `server` is true the backend listens on the given address
 and waits for an incoming connection. When false it connects to
-a remote server at that address. The address format is always
-`IP:Port` (for example `127.0.0.1:4001`).
+a remote server at that address. The parser requires exactly
+one colon and parses the address with `asio::ip::make_address`.
+Use a numeric IP literal such as `127.0.0.1:4001`; host names
+are not resolved, and IPv6 literals are not supported by this
+format.
 
 If `sigquit` is enabled and the byte `0x1c` (ASCII FS) appears
 in the incoming data stream, the simulation is stopped
@@ -75,9 +78,7 @@ immediately via `sc_stop()`.
 
 ## char_backend_file
 
-File backend. Reads serial input from one file and writes
-serial output to another. This is convenient for batch
-testing or logging UART traffic to disk.
+File backend for serial input and output.
 
 ### CCI Parameters
 
@@ -86,6 +87,13 @@ testing or logging UART traffic to disk.
 | `read_file` | `string` | `""` | Path to the file supplying input data |
 | `write_file` | `string` | `""` | Path to the file receiving output data |
 | `baudrate` | `unsigned int` | `0` | Read speed in bytes per second (0 = unlimited) |
+
+Both file names default to empty. Configure both paths for
+input and output. The current implementation does not safely
+support a one-sided configuration: its receive thread can call
+`fread` with no input file, and its output handler can call
+`fwrite` with no output file. The constructor reports an error
+when both paths are empty.
 
 When `baudrate` is non-zero, characters are read from the
 input file at the specified rate, modelling realistic serial

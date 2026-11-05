@@ -26,6 +26,7 @@ Constructor:
 |-----------|---------|-------------|
 | `serial` | component name | Serial name of the NVME disk |
 | `blob_file` | (required) | File to use as data storage |
+| `format` | `raw` | Blob format; accepted values are `raw` and `qcow2` |
 | `max_ioqpairs` | 64 | Maximum I/O queue pairs (passed to QEMU) |
 
 The `blob_file` parameter is required -- the device will fail
@@ -47,14 +48,15 @@ The `ufs` class provides the UFS Host Controller (QEMU).
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `serial` | string | `""` | Controller serial identifier |
-| `nutrs` | uint32_t | 32 | Number of UTP transfer request slots |
-| `nutmrs` | uint32_t | 8 | Number of UTP task management request slots |
+| `nutrs` | uint8_t | 32 | Number of UTP transfer request slots |
+| `nutmrs` | uint8_t | 8 | Number of UTP task management request slots |
 | `mcq` | bool | `false` | Multiple command queue support |
-| `mcq_maxq` | uint32_t | 2 | MCQ maximum number of queues |
+| `mcq_maxq` | uint8_t | 2 | MCQ maximum number of queues |
 
 #### Sockets
 
-- `q_socket` -- Target socket for register access
+- C++ member `q_socket` is exposed for binding as `mem` and
+  provides target access to the QEMU device
 - `irq_out` -- Interrupt signal output
 
 ### UFS Logical Unit
@@ -76,7 +78,7 @@ within the UFS controller.
 ufs_0 = {
     moduletype = "ufs",
     args = {"&platform.qemu_inst"},
-    q_socket = {address = 0x1c140000, size = 0x10000, bind = "&router.initiator_socket"},
+    mem = {address = 0x1c140000, size = 0x10000, bind = "&router.initiator_socket"},
     irq_out = {bind = "&gic_0.spi_in_20"},
 };
 
@@ -98,8 +100,8 @@ Constructor:
 
 ### Sockets
 
-- `regs_socket` -- Register access (target socket)
-- `desc_socket` -- Descriptor access (target socket)
+- C++ member `regs_socket` is exposed for binding as `regs`
+- C++ member `desc_socket` is exposed for binding as `desc`
 - `irq_out` -- Interrupt output
 
 ### CCI Parameters
@@ -131,3 +133,10 @@ ethoc: ethernet@c7000000 {
     interrupts = <0x00 0x02 0x04>;
 };
 ```
+
+## Scope and Limitations
+
+These notes describe the QBox wrapper interfaces. They do not
+verify external QEMU kernel or device-tree behavior, or certify
+hardware address ranges. Check those details against the
+selected QEMU version and platform configuration.

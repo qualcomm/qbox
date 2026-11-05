@@ -23,9 +23,11 @@ parameter takes precedence.
 
 ## Lua Configuration
 
-Platform configurations are written in Lua. A typical
-configuration defines a hierarchy of modules with their
-parameters and socket bindings:
+Platform configurations are written in Lua. This excerpt shows
+module arguments and socket bindings. It is not a complete
+bootable platform; see the
+[in-tree AArch64 configuration](../platforms/ubuntu/conf_aarch64.lua)
+for a full example.
 
 ```lua
 platform = {
@@ -40,11 +42,16 @@ platform = {
             bind = "&router.initiator_socket"
         }
     },
+    qemu_inst_mgr = {
+        moduletype = "QemuInstanceManager"
+    },
     qemu_inst = {
-        moduletype = "QemuInstance"
+        moduletype = "QemuInstance",
+        args = { "&platform.qemu_inst_mgr", "AARCH64" }
     },
     cpu_0 = {
         moduletype = "cpu_arm_cortexA76",
+        args = { "&platform.qemu_inst" },
         mem = {bind = "&router.target_socket"}
     }
 }
@@ -52,8 +59,9 @@ platform = {
 
 ## YAML Configuration
 
-If you prefer YAML, the `lyaml` library provides a bridge.
-Install it from
+If you prefer YAML, the example below uses the external Lua
+module `lyaml`. Install and configure that module separately
+for your Lua environment before using this example:
 https://github.com/gvvaughan/lyaml.
 
 The following Lua snippet loads a `conf.yaml` file:
@@ -87,18 +95,19 @@ parent broker.
 
 ### Instantiation Modes
 
-**1. Private broker:** `ConfigurableBroker()`
+**1. Default broker:** `ConfigurableBroker()`
 
-When constructed with no initialized parameters, **all**
-parameters held within this broker are treated as private
-(hidden from the parent broker).
+For a nested broker, the default constructor starts with an
+empty hidden-parameter list. It forwards parameters to the
+parent unless they are added to that list. This is not the
+same as hiding every parameter.
 
 **2. Selective broker:**
 `ConfigurableBroker({{"key1","value1"}, {"key2","value2"}, ...})`
 
 Sets and hides the listed keys. All other keys are passed
-through (exported), making the broker invisible for unlisted
-parameters. This is useful for structural parameters.
+through (exported). This is useful when only selected
+parameters must remain local.
 
 A pass-through broker can be created with an empty list:
 `ConfigurableBroker({})`. This provides a local broker without

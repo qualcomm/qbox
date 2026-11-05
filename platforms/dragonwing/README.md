@@ -1,97 +1,74 @@
-# DragonWing: SA8775P QLI 2.0 Linux + CDSP
+# Qualcomm Dragonwing™ Virtual Platform
 
-Boots Qualcomm Linux (QLI 2.0) on the SA8775P platform model, with the two
-CDSP (Hexagon) subsystems, using QBox.
+This experimental configuration describes the Qualcomm Dragonwing™
+SA8775P platform in QBox. It targets Qualcomm® Linux® (QLI 2.0) and
+includes two Hexagon CDSP subsystems. The configuration is under
+`platforms/dragonwing/configs/fw/8775/bsp/lnx/qli_2.0/conf.lua`.
 
-The platform is described by `configs/fw/8775/bsp/lnx/qli_2.0/conf.lua`. The
-SoC models it needs live in `systemc-components/` (`SA8775P`, `pll`, `pub`,
-`csr`, `wdog`, `mpm_control`, `ipcc`, `qupv3_qupv3_se_wrapper_se0`,
-`aoss_pmic_arb_pmic_arb_core`, `apss_hm_apss_shared_apss_intu`) and are built
-when `ENABLE_DRAGONWING=ON`.
+> **Status:** Build and boot are not verified here. The example commands
+> show the source configuration and build options; they do not confirm
+> that a particular checkout, firmware set, or QNN workload will work.
 
-## 1. Prerequisites
+## Prerequisites
 
-Ubuntu 24.04, GCC 13, CMake >= 3.28, and:
+Use the standard QBox build prerequisites in
+[Building QBox](../../docs/building.md). The options below are specific
+to this platform. Ubuntu 24.04, GCC 13, and CMake 3.28 are an example
+host setup, not a supported-host matrix or a tested requirement.
 
-```bash
-sudo apt install build-essential cmake ninja-build git pkg-config python3 \
-    python3-venv libzip-dev libglib2.0-dev libpixman-1-dev libasio-dev
-```
+The platform needs a compatible, authorized external QLI firmware set.
+The configuration looks for all five of these files:
 
-(The list is approximate; CMake reports anything else that is missing.)
+- `Image`
+- `simple1.dtb`
+- `rootfs.ext4`
+- `smem_init.bin`
+- `arm64_bootloader.lua`
 
-## 2. Clone
+Obtain a set through an approved source and confirm that it matches the
+platform configuration. No firmware download URL or access method is
+provided here. The guest QNN libraries, models, input files, and runtime
+context are also not bundled. QNN workloads require a compatible guest
+setup and target-specific assets.
 
-After the DragonWing changes are available on the staging repository's `main`
-branch, clone that repository:
+## Build
 
-```bash
-git clone https://github.com/qcom-eng-sim/qbox-staging.git
-cd qbox-staging
-```
+Use a development checkout of the
+[Qualcomm QBox project](https://github.com/qualcomm/qbox). Do not assume
+that a public checkout includes this configuration: confirm that the
+Dragonwing files listed above exist in your checkout before building.
+The repository is built with QBox's shared `platforms-vp` executable;
+there is no separate Dragonwing executable.
 
-You also need the QLI images directory (`exp_qli_qcow2`) from the QQVP
-`firmware-images` repository. It must contain `Image`, `simple1.dtb`,
-`rootfs.ext4`, `smem_init.bin` and `arm64_bootloader.lua`.
-
-`--images-dir` supplies the external fallback directory for Lua `image_file()`
-lookups. For each image, the helper checks the directory of the Lua configuration
-first, then the directory supplied to `--images-dir`. It does not download images
-or infer a default firmware path.
-
-## 3. Build
+From the repository root:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-      -DENABLE_DRAGONWING=ON -DENABLE_PYTHON_BINDER=OFF \
-      -DLIBQEMU_TARGETS="aarch64;hexagon"
-make -C build -j$(nproc)
+    -DENABLE_DRAGONWING=ON -DENABLE_PYTHON_BINDER=OFF \
+    -DLIBQEMU_TARGETS="aarch64;hexagon"
+cmake --build build --parallel
 ```
 
-`LIBQEMU_TARGETS` must include `hexagon`; otherwise the run stops with
-"target `Hexagon` disabled at compile time". The build produces
-`build/platforms-vp` and the model libraries next to it.
+These options enable the Dragonwing model and compile the AArch64 and
+Hexagon QEMU targets. The Hexagon target is needed by this configuration.
+The command does not fetch or install firmware assets.
 
-## 4. Launch
+## Run
 
-Run from the `build` directory. `-p` options must come before `-l`.
+From the repository root, pass the external firmware directory to
+`--images-dir`. The Lua configuration checks its own directory first,
+then this fallback directory. For example:
 
 ```bash
-cd build
-./platforms-vp -p platform.hexagon_semihosting=true \
-    --images-dir <path-to>/firmware-images/exp_qli_qcow2 \
-    -l ../platforms/dragonwing/configs/fw/8775/bsp/lnx/qli_2.0/conf.lua \
-    | tee run.log
+./build/platforms-vp --images-dir <path-to-compatible-firmware-set> \
+    -l platforms/dragonwing/configs/fw/8775/bsp/lnx/qli_2.0/conf.lua
 ```
 
-The first boot takes a few minutes. The guest serial console is this
-terminal. Wait for `qcs9100-ride-sx login:` and log in (typically `root`).
+The files in the firmware directory must include the five names listed
+above. A successful build does not establish that the firmware will boot
+or that a QNN workload will run.
 
-## 5. Check in the guest
+## Related guides
 
-CDSP firmware and remoteproc:
-
-```bash
-ls /lib/firmware/qcom/sa8775p
-dmesg | grep -i -E "remoteproc|cdsp|fastrpc"
-```
-
-FastRPC (cdsp0 is `-d 3`, cdsp1 is `-d 4`; run from any directory):
-
-```bash
-fastrpc_test -d 3 -U 0 -t linux -a v68
-fastrpc_test -d 3 -U 1 -t linux -a v68
-fastrpc_test -d 3 -U 0 -t linux -a v75
-fastrpc_test -d 3 -U 1 -t linux -a v75
-fastrpc_test -d 4 -U 0 -t linux -a v68
-fastrpc_test -d 4 -U 1 -t linux -a v68
-fastrpc_test -d 4 -U 0 -t linux -a v75
-fastrpc_test -d 4 -U 1 -t linux -a v75
-```
-
-QNN (needs `/mnt/qnn` with `input_list.txt` and `vgg_ctx.bin` in the guest):
-
-```bash
-qnn-net-run --backend libQnnHtp.so --input_list /mnt/qnn/input_list.txt \
-    --retrieve_context /mnt/qnn/output/vgg_ctx.bin --output_dir /mnt/qnn/output
-```
+- [QBox build instructions](../../docs/building.md)
+- [Documentation index](../../docs/README.md)

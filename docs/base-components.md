@@ -23,9 +23,11 @@ following load types:
 ### Binary Files
 
 - CCI parameter: `bin_file`
-- Options: `address` (absolute) or `offset` (relative)
+- Options: `address` (absolute) or `offset` (relative),
+  `bin_file_offset` and `bin_file_size` (used together to
+  select a file range)
 - Function:
-  `void file_load(std::string filename, uint64_t addr, uint64_t file_offset = 0, uint64_t file_data_len = max)`
+  `void file_load(std::string& filename, uint64_t addr, uint64_t file_offset = 0, uint64_t file_data_len = std::numeric_limits<uint64_t>::max())`
 
 ### CSV Files (32-bit data)
 
@@ -40,10 +42,13 @@ following load types:
 
 - CCI parameter: `zip_archive`
 - Options: `address` (absolute) or `offset` (relative),
-  `archived_file_name`, `archived_file_offset`,
-  `archived_file_size`, `is_compressed`
+  `archived_file_name`, `archived_file_offset`, and
+  `archived_file_size`
 - Function:
   `void zip_file_load(zip_t* p_archive, const std::string& archive_name, uint64_t addr, ...)`
+- `is_compressed` is not a loader CCI parameter. It is an
+  argument to the programmatic `zip_file_load` helper, which
+  selects nested-archive extraction when true.
 
 ### String Parameter
 
@@ -127,14 +132,19 @@ A debugging utility for dumping memory state to files.
 
 - `outfile` (`std::string`): Output file name. The binary
   file is written as
-  `<memoryname>.0x<start_addr>-0x<end_addr>.<outfile>`.
+  `<memoryname>.0x<start_addr>-0x<end_addr>.<outfile>`;
+  `outfile` defaults to `dumpfile`. The end address is
+  exclusive (`start_addr + memory_size`).
 - `MemoryDumper_trigger` (`bool`): Writing to this parameter
   triggers the dump.
 
-The dumper must be bound to the main system router. It
-discovers all memories in the system, finds their addresses,
-and requests data via its initiator port. A target port must
-also be bound; accessing its bound address triggers the dump.
+The dumper finds `gs_memory` objects in the SystemC hierarchy
+and reads their configured `target_socket.address` and
+`target_socket.size`. Bind `initiator_socket` to a path that
+can reach those memories and grants DMI. The dumper stops
+reading a memory when DMI is unavailable, so that output file
+may contain only part of that memory. A TLM transaction at
+address zero on `target_socket` also triggers a dump.
 
 ## Router
 
@@ -159,9 +169,9 @@ default is relative addressing.
 ### Routing Order
 
 Targets are sorted by `priority` (lower values match first).
-Targets with equal priority maintain their bind order
-(`std::stable_sort`). Overlapping addresses are allowed --
-the first match is used. The default priority is 0.
+Overlapping addresses are allowed. If two targets have equal
+priority in an overlap, the newly added mapping wins. The
+default priority is 0.
 
 ### Convenience Functions
 
@@ -190,16 +200,16 @@ target).
 
 ### CCI Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `p_mapped_base_addr` | `uint64_t` | Base address added to or subtracted from the incoming address to produce the outgoing address |
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `mapped_base_addr` | `uint64_t` | `0` | Base address used to translate addresses |
 
 ### Usage
 
 Place the address translator on a path where the initiator
 uses one address space and the target expects another. The
 translator rewrites the transaction address using the
-configured `p_mapped_base_addr`.
+configured `mapped_base_addr`.
 
 ## Exclusive Monitor (exclusive_monitor)
 
@@ -210,8 +220,10 @@ by ARM LDREX/STREX (and similar) instructions.
 
 ### Sockets
 
-- `front_socket` -- target socket facing the initiator
-- `back_socket` -- initiator socket facing the target
+- C++ member `front_socket` is exposed for binding as
+  `front-socket` and faces the upstream initiator
+- C++ member `back_socket` is exposed for binding as
+  `back-socket` and faces the downstream target
 
 ### CCI Parameters
 
@@ -251,23 +263,23 @@ altering the transaction payload.
 
 ## DMI Converter (dmi_converter)
 
-The DMI converter is a caching bridge that sits between
-initiators and targets and caches Direct Memory Interface
-(DMI) regions. By caching DMI pointers, it avoids repeated
-DMI negotiations and improves simulation performance.
+The DMI converter is a bridge between initiators and targets
+that caches granted Direct Memory Interface (DMI) regions.
+It can serve eligible accesses through cached DMI pointers.
+This is intended to reduce TLM traffic; actual performance
+depends on the model and workload.
 
 ### CCI Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `p_tlm_ports_num` | `uint32_t` | Number of TLM port pairs to instantiate |
+| `dmic_tlm_ports_num` | `uint32_t` | Number of TLM port pairs to instantiate (default: 1) |
 
 ### Sockets
 
-- `initiator_sockets` -- vector of initiator sockets (one
-  per port)
-- `target_sockets` -- vector of target sockets (one per
-  port)
+- C++ vector members: `initiator_sockets` and `target_sockets`.
+  Bindable elements are named `initiator_socket_N` and
+  `target_socket_N`, where `N` is the zero-based port index.
 
 ### Behavior
 
@@ -288,14 +300,13 @@ that uses a different width.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `p_tlm_ports_num` | `uint32_t` | Number of TLM port pairs to instantiate |
+| `tlm_ports_num` | `uint32_t` | Number of TLM port pairs to instantiate (default: 1) |
 
 ### Sockets
 
-- `initiator_sockets` -- vector of initiator sockets (one
-  per port)
-- `target_sockets` -- vector of target sockets (one per
-  port)
+- C++ vector members: `initiator_sockets` and `target_sockets`.
+  Bindable elements are named `initiator_socket_N` and
+  `target_socket_N`, where `N` is the zero-based port index.
 
 ### Behavior
 
@@ -312,9 +323,9 @@ adds support for register callback functions. It exposes an
 
 ### CCI Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `lazy_init` | `bool` | When true, defer initialization until first access |
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `lazy_init` | `bool` | `false` | When true, defer initialization until first access |
 
 ### Sockets
 
@@ -341,9 +352,9 @@ against external real-time events.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `p_RTquantum_ms` | `double` | Real-time quantum in milliseconds; the granularity at which the limiter checks and throttles simulation progress |
-| `p_SCTimeout_ms` | `double` | SystemC timeout in milliseconds; maximum time the simulation may advance before yielding |
-| `p_MaxTime_ms` | `double` | Maximum wall-clock time in milliseconds; stops the simulation after this duration |
+| `RTquantum_ms` | `double` | Real-time quantum in milliseconds; default 100 |
+| `SCTimeout_ms` | `double` | Stalled-simulation timeout in milliseconds; default 0 disables it |
+| `MaxTime_ms` | `double` | Maximum simulation run time in milliseconds; default 0 means no limit |
 
 ### Sockets
 
@@ -351,17 +362,17 @@ None.
 
 ### Behavior
 
-At each quantum boundary the limiter compares elapsed
-simulation time against elapsed wall-clock time. If the
-simulation is ahead, it sleeps until real time catches up.
-The `p_MaxTime_ms` parameter can impose a hard wall-clock
-cap on the simulation run.
+The limiter paces simulation time against elapsed wall-clock
+time. `SCTimeout_ms` is checked only when simulation time is
+stalled; it causes a fatal report if the requested run-ahead
+exceeds the configured limit. `MaxTime_ms` limits elapsed
+simulation time, not wall-clock run time.
 
 ## Exiter (exiter)
 
 The exiter provides a mechanism to stop the simulation by
-writing to a memory-mapped address. It exposes a single
-target socket named `socket`.
+writing to a memory-mapped address. Its C++ socket member is
+named `socket`; the bindable socket name is `target_socket`.
 
 ### CCI Parameters
 
@@ -369,7 +380,7 @@ None.
 
 ### Sockets
 
-- `socket` -- target socket; any write to this address
+- `target_socket` -- target socket; a write to this address
   triggers simulation termination
 
 ### Behavior
@@ -412,7 +423,7 @@ monitoring simulation progress.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `interval_us` | `uint64_t` | Interval in microseconds between successive time-stamp prints |
+| `interval_us` | `uint64_t` | Simulation-time wait interval in microseconds before each print (default: 1,000,000) |
 
 ### Sockets
 
@@ -420,17 +431,16 @@ None.
 
 ### Behavior
 
-At each configured interval, the time printer emits the
-current simulation time to the log output. This provides a
-quick visual indication of how far the simulation has
-progressed and at what rate.
+The time printer logs elapsed wall-clock time, then waits for
+`interval_us` of simulation time before logging again. Its
+report requires the module's log level to be at least 4.
 
 ## PL011 UART (SystemC)
 
 The PL011 UART is a pure SystemC model of the ARM PL011
 Universal Asynchronous Receiver/Transmitter. It implements
-the register interface, transmit and receive FIFOs, and
-interrupt generation defined by the ARM PL011 specification.
+the register interface, receive FIFO, and interrupt
+generation. Transmit data is sent directly to the backend.
 
 ### CCI Parameters
 
@@ -438,8 +448,8 @@ None.
 
 ### Sockets
 
-- `socket` -- target socket exposing the PL011 register
-  interface for memory-mapped access
+- C++ member `socket` is exposed for binding as
+  `target_socket` and carries the PL011 register interface
 - `backend_socket` -- biflow socket carrying the character
   stream to and from a backend (stdio, socket, or file)
 - `irq` -- initiator signal socket for interrupt output
@@ -447,19 +457,21 @@ None.
 ### Behavior
 
 Guest software accesses the UART through its register
-interface on `socket`. Characters written to the transmit
-data register are forwarded through `backend_socket` to a
-character backend. Characters arriving from the backend are
-placed into the receive FIFO and, when enabled, trigger an
-interrupt via `irq`. The model supports both polled and
-interrupt-driven operation.
+interface on `target_socket`. A character written to the
+transmit data register is enqueued directly on
+`backend_socket`; it is not held in a transmit FIFO. Characters
+arriving from the backend enter the receive FIFO and can
+trigger an interrupt via `irq`.
 
 ## Testing
 
-Tests for each component are located under
-`tests/base-components/`. After building, run:
+Component test sources are under `tests/components/`. List the
+tests registered by the current build with:
 
 ```bash
-# Run all tests
-ctest --test-dir build -R base-components
+ctest --test-dir build -N
 ```
+
+No test results are implied by this documentation. See
+[`tests/components/loader/src/README.md`](../tests/components/loader/src/README.md)
+for the loader test fixture notes.

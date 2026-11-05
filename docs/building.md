@@ -1,137 +1,81 @@
 # Building QBox
 
-## Windows
+This page is the build guide hub. Choose an operating system guide for
+prerequisites and complete configure, build, test, and install commands:
 
-### Limitations
+- [Linux](building/linux.md)
+- [Windows](building/windows.md)
+- [macOS](building/macos.md)
 
-The following components are not supported on Windows:
+## Build requirements and support status
 
-- `component_constructor`
-- `legacy_char_backend_stdio`
-- `fss`
-- `ufs`
-- `ufs_lu`
-- `vnc`
-- `pl031`
-- `pflash_cfi`
-- `fw_cfg`
-- `ramfb`
+The root `CMakeLists.txt` declares CMake 3.14 as its minimum. However,
+`CMakePresets.json` uses preset schema version 3, which requires CMake 3.21 or
+newer. The root minimum does not prove that presets work with every CMake
+version. Use CMake 3.21 or newer for the documented preset commands.
 
-### Prerequisites
+The build requires host Threads, pkg-config, `libelf`, `libzip`, GLib, and
+`libfdt`. Python interpreter and development files are required when the
+default `ENABLE_PYTHON_BINDER=ON` option is enabled. The OS guides describe the
+dependency script. CMake fetches source dependencies, including SystemC, CCI,
+and other CPM packages; `package-lock.cmake` pins packages. These fetched
+packages do not replace required host development libraries. There is no
+`.gitmodules` file describing build dependencies.
 
-#### Enable Developer Mode
+| Platform/version | Installer/configuration status | Qualification |
+|---|---|---|
+| Ubuntu 22.04 and 24.04 | In the Linux CI matrix | CI workflow configuration, not proof of a successful run |
+| Ubuntu 20.04 | Accepted by the dependency script | Not in the Linux CI matrix; build/test status is unverified |
+| Windows 11 ARM64, MSYS2 CLANGARM64 | In the Windows CI workflow with preset `clang` | Configured CI variant; not proof of a successful run |
+| Windows x86_64, MSYS2 UCRT64 | Packages and `win-gcc*` presets are defined | UCRT64 workflow variant is commented out as unstable; no CI build is configured |
+| macOS 15 and 26 | Installer and macOS CI matrix support these versions | CI workflow configuration, not proof of a successful run |
+| macOS 14 | Not accepted by the current dependency script | Do not treat older README text as current installer support |
 
-QBox uses symbolic links during compilation, which are disabled by default on Windows. You must enable Developer Mode to allow symbolic link creation without elevated privileges.
+Ubuntu CI configures `gcc`, `gcc-debug`, `clang`, and `clang-debug` on both
+Ubuntu versions. It configures `clang-lto` only on Ubuntu 24.04. macOS CI
+configures `mac` and `mac-debug` on macOS 15 and 26. Windows CI configures the
+generic `clang` preset only in CLANGARM64. Other `win-gcc*` and `win-clang*`
+presets exist in CMake, but are not current Windows CI configurations.
 
-To enable Developer Mode, follow the official [Microsoft guide](https://learn.microsoft.com/en-us/windows/apps/get-started/enable-your-device-for-development).
+## Build layout, tests, and options
 
-#### Set Up a Dev Drive (Optional)
-
-For improved compilation performance, consider setting up a Dev Drive as described in the [Microsoft documentation](https://learn.microsoft.com/en-us/windows/dev-drive/).
-
-If you configure a Dev Drive, install the MSYS2 environment on this drive to ensure all build operations benefit from the performance improvements. For example, if the Dev Drive is mounted at `D:\`, choose a subdirectory such as `D:\msys64` as the MSYS2 installation path.
-
-### Install MSYS2
-
-Download and install MSYS2 from [https://www.msys2.org](https://www.msys2.org).
-
-After installation, launch the appropriate MSYS2 environment from the Start Menu:
-
-| Host Architecture | Environment |
-|-------------------|-------------|
-| Windows ARM64 (including Snapdragon) | MSYS2 CLANGARM64 |
-| Windows x86_64 | MSYS2 UCRT64 |
-
-> **Note:** The `MSYS2 MINGW64` environment is available but not recommended. See the [MSYS2 environments documentation](https://www.msys2.org/docs/environments/) for details on MSVCRT vs UCRT.
-
-### Install Build Dependencies
-
-Run the following commands in your MSYS2 terminal:
+Each preset writes to the repository's `build/` directory. The main runtime
+executable is `build/platforms-vp`; test executables are under `build/tests/`.
+To list tests in a configured build or select them by CTest regular expression,
+use:
 
 ```bash
-pacman -Syu
+ctest --test-dir build -N
+ctest --preset <preset> -R '<regular-expression>'
 ```
 
-After the system update completes (you may need to restart the terminal), install the required packages:
+Presets default `LIBQEMU_TARGETS` to `aarch64;hexagon;xtensa;riscv64;riscv32`.
+The CI commands narrow that to `aarch64;hexagon`. `ENABLE_PYTHON_BINDER` is ON
+by default; use `-DENABLE_PYTHON_BINDER=OFF` to disable it. `clang-lto` enables
+LTO and lld. Linux and macOS enable virgl/vircl renderer options by default;
+Windows disables them by default.
+
+The presets set the install prefix to `build/install`. Install with
+`cmake --install build` to use that configured prefix. Do not pass `--prefix`
+at install time: the root CMake configuration installs `qemu-components` and
+`systemc-components` to the absolute `CMAKE_INSTALL_PREFIX` set at configure
+time. An install-time override can therefore put those directories in the
+configured prefix while placing other files under the override.
+
+To use a custom prefix, set it during configuration, then use that same preset
+for the build and install. For example:
 
 ```bash
-pacman -S --noconfirm \
-    base-devel \
-    binutils \
-    bison \
-    diffutils \
-    flex \
-    git \
-    grep \
-    make \
-    sed \
-    vim \
-    tree \
-    msys2-runtime-devel \
-    ${MINGW_PACKAGE_PREFIX}-toolchain \
-    ${MINGW_PACKAGE_PREFIX}-cmake \
-    ${MINGW_PACKAGE_PREFIX}-gtk3 \
-    ${MINGW_PACKAGE_PREFIX}-libnfs \
-    ${MINGW_PACKAGE_PREFIX}-libssh \
-    ${MINGW_PACKAGE_PREFIX}-meson \
-    ${MINGW_PACKAGE_PREFIX}-ninja \
-    ${MINGW_PACKAGE_PREFIX}-pixman \
-    ${MINGW_PACKAGE_PREFIX}-pkgconf \
-    ${MINGW_PACKAGE_PREFIX}-python \
-    ${MINGW_PACKAGE_PREFIX}-SDL2 \
-    ${MINGW_PACKAGE_PREFIX}-zstd \
-    ${MINGW_PACKAGE_PREFIX}-libelf \
-    ${MINGW_PACKAGE_PREFIX}-asio \
-    ${MINGW_PACKAGE_PREFIX}-libslirp
+cmake --preset gcc -DCMAKE_INSTALL_PREFIX="$HOME/.local/qbox"
+cmake --build --preset gcc --parallel
+cmake --install build
 ```
 
-> **Note:** MSYS2 environments are isolated. If you use multiple environments, packages must be installed separately in each one.
+The install tree is not a self-contained bundle. Downstream projects must also
+resolve required dependencies, including SystemC, CCI, fmt, reporting, and
+libqemu.
 
-### Configure SSL Certificates (Optional)
-
-If you encounter SSL certificate errors such as:
-
-```
-SSL certificate problem: self signed certificate in certificate chain
-```
-
-This occurs because MSYS2 does not integrate with the Windows certificate store. To resolve this, copy your organization's certificate files (`.pem` or `.cer`) to the MSYS2 trust store and update the certificate database:
-
-```bash
-cp /path/to/certificate.pem /etc/pki/ca-trust/source/anchors/
-update-ca-trust
-```
-
-For more information, see the [MSYS2 FAQ](https://www.msys2.org/docs/faq/).
-
-### Windows Terminal Integration (Optional)
-
-You can add MSYS2 environments as profiles in Windows Terminal for convenient access.
-
-Add the following entries to your Windows Terminal `settings.json` file. Adjust the paths if MSYS2 is installed in a location other than `C:\msys64`.
-
-#### CLANGARM64 Profile (ARM64)
-
-```json
-{
-    "commandline": "C:/msys64/msys2_shell.cmd -defterm -here -no-start -clangarm64",
-    "guid": "{5c03ab6d-5335-40fd-8b73-c5aab12cf419}",
-    "hidden": false,
-    "icon": "C:/msys64/clangarm64.ico",
-    "name": "CLANGARM64 / MSYS2",
-    "startingDirectory": "C:/msys64/home/%USERNAME%"
-}
-```
-
-#### UCRT64 Profile (x86_64)
-
-```json
-{
-    "commandline": "C:/msys64/msys2_shell.cmd -defterm -here -no-start -ucrt64",
-    "guid": "{17da3cac-b318-431e-8a3e-7fcdefe6d114}",
-    "hidden": false,
-    "icon": "C:/msys64/ucrt64.ico",
-    "name": "UCRT64 / MSYS2",
-    "startingDirectory": "C:/msys64/home/%USERNAME%"
-}
-```
+For the experimental DragonWing platform, see
+[its platform guide](../platforms/dragonwing/README.md). The separate
+[hello-qbox example](../platforms/hello-qbox/README.md) documents a standalone
+consumer project.

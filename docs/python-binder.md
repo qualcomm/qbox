@@ -15,20 +15,22 @@ process.
 To build QBox without PythonBinder and its pybind11
 dependencies, use: `-DENABLE_PYTHON_BINDER=OFF`.
 
-Note: `WITHOUT_PYTHON_BINDER` is deprecated and will be
-removed in a future release.
+`WITHOUT_PYTHON_BINDER` is deprecated. Use
+`ENABLE_PYTHON_BINDER=OFF` instead.
 
 ## CCI Parameters
 
-| Parameter | Description |
-|-----------|-------------|
-| `py_module_name` | Name of the Python script (with or without `.py` suffix) |
-| `py_module_dir` | Directory containing the Python module |
-| `py_module_args` | Command-line arguments string passed to the module |
-| `tlm_initiator_ports_num` | Number of TLM initiator ports |
-| `tlm_target_ports_num` | Number of TLM target ports |
-| `initiator_signals_num` | Number of initiator signals |
-| `target_signals_num` | Number of target signals |
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `py_module_name` | `std::string` | `""` | Name of the Python script (with or without `.py` suffix) |
+| `py_module_dir` | `std::string` | `""` | Directory containing the Python module |
+| `py_module_args` | `std::string` | `""` | Command-line arguments string passed to the module |
+| `tlm_initiator_ports_num` | `uint32_t` | `0` | Number of TLM initiator ports |
+| `tlm_target_ports_num` | `uint32_t` | `0` | Number of TLM target ports |
+| `initiator_signals_num` | `uint32_t` | `0` | Number of initiator signals |
+| `target_signals_num` | `uint32_t` | `0` | Number of target signals |
+| `current_mod_id_prefix` | `std::string` | `""` | Prefix used for dynamically created Python modules; use a unique value per PythonBinder instance |
+| `biflow_socket_num` | `uint32_t` | `0` | Number of biflow sockets; supported values are `0` and `1` |
 
 ## Python API
 
@@ -71,9 +73,13 @@ Arithmetic operators: `+`, `-`, `/`, `*`, `%`, `+=`, `-=`,
   `spawn_method()`
 
 **Functions:**
-- `wait(t: sc_time)` / `wait(ev: sc_event)`
 - `sc_spawn(f: Callable, name: str,
   opts: sc_spawn_options)`
+
+`sc_core.wait()` is not bound to Python. For Python callbacks
+that need to suspend and resume, use the binder's generator/yield
+handling, which schedules callbacks with SystemC `next_trigger`.
+Do not call `sc_core.wait()` from Python.
 
 ### gs Module
 
@@ -112,19 +118,21 @@ Arithmetic operators: `+`, `-`, `/`, `*`, `%`, `+=`, `-=`,
   `set_streaming_width(int)`
 - Byte enable: `set_byte_enable_length(int)`,
   `get_byte_enable_length()`,
-  `set_byte_enable_ptr(buffer)`,
   `set_byte_enable(buffer)`, `get_byte_enable()`
 
-Note: `set_data_ptr()` / `set_byte_enable_ptr()` are for
-transactions created in Python. `set_data()` /
-`set_byte_enable()` are for transactions created in C++ and
-reused from Python.
+`set_data_ptr()` is for transactions created in Python.
+`set_data()` / `set_byte_enable()` are for transactions created
+in C++ and reused from Python.
+
+**Known limitation:** `set_byte_enable_ptr()` is currently not
+working. Its binding calls `set_data_ptr()` instead. Do not rely
+on it as a supported feature.
 
 ## Dynamically Created Modules
 
-These modules are prefixed with the
-`current_mod_id_prefix` CCI parameter value to ensure
-unique imports per PythonBinder instance. For example, if
+These modules use the actual value of the
+`current_mod_id_prefix` CCI parameter to make imports unique
+per PythonBinder instance. For example, if
 `current_mod_id_prefix = "i2c_"`, use
 `import i2c_biflow_socket` instead of
 `import biflow_socket`.
@@ -178,6 +186,6 @@ These can be implemented in the Python script:
 
 ## Examples
 
-- `tests/base-components/python-binder` -- PythonBinder
+- `tests/components/python-binder` -- PythonBinder
   test bench
 - `py-models/py-uart.py` -- stdio backend for PL011 UART
