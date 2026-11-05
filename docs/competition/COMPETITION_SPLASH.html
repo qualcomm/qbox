@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07152d">
+  <meta name="description" content="Enter the QBox competition, kicking off at DVCon Europe 2026. Demonstrate a use case with the Qualcomm Dragonwing™ Virtual Platform in QBox, Qualcomm® Linux® and Qualcomm Neural Network (QNN) models from the Qualcomm® AI Hub. Closing date: 26 February 2027. Results will be announced at a SystemC Evolution Fika in March 2027.">
+  <title>QBox Competition | DVCon Europe 2026</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --navy: #07152d;
+      --navy-deep: #040d20;
+      --yellow: #f4d21f;
+      --white: #f7f9ff;
+      --muted: #d3dcef;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      min-height: 100svh;
+      margin: 0;
+      width: 100%;
+      min-width: 0;
+      background: var(--navy);
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+    }
+
+    .competition-splash {
+      position: relative;
+      isolation: isolate;
+      display: flex;
+      min-height: 100vh;
+      min-height: 100svh;
+      flex-direction: column;
+      overflow: hidden;
+      padding: clamp(1.25rem, 3.6vw, 3.5rem);
+      color: var(--white);
+      background: var(--navy);
+    }
+
+    .competition-splash::before,
+    .competition-splash::after {
+      position: absolute;
+      z-index: -1;
+      inset: 0;
+      content: "";
+    }
+
+    .competition-splash::before {
+      background: url("DVCon%20backdrop.png") center / cover no-repeat;
+      opacity: .65;
+    }
+
+    .competition-splash::after {
+      background:
+        linear-gradient(90deg, rgba(4, 13, 32, .97) 0%, rgba(5, 17, 39, .91) 52%, rgba(5, 17, 39, .78) 100%),
+        linear-gradient(0deg, rgba(4, 13, 32, .92), transparent 48%, rgba(4, 13, 32, .35));
+    }
+
+    .splash-header,
+    .splash-content,
+    .splash-footer {
+      width: min(100%, 1440px);
+      margin-inline: auto;
+    }
+
+    .splash-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1.5rem;
+    }
+
+    .dvcon-logo {
+      display: block;
+      width: clamp(155px, 19vw, 235px);
+      height: auto;
+    }
+
+    .partner-lockup {
+      display: flex;
+      align-items: center;
+      gap: .7rem;
+    }
+
+    .dragonwing-brand {
+      display: flex;
+      width: clamp(130px, 15vw, 200px);
+      height: 56px;
+      align-items: center;
+      justify-content: center;
+      padding: .45rem .65rem;
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    .dragonwing-brand img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .qbox-brand {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      padding: .3rem .6rem .3rem .35rem;
+      border: 1px solid rgba(255, 255, 255, .28);
+      border-radius: 10px;
+      background: rgba(5, 17, 39, .7);
+      color: var(--white);
+      font-size: .78rem;
+      font-weight: 750;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      text-decoration: none;
+    }
+
+    .qbox-brand img {
+      display: block;
+      width: 42px;
+      height: 48px;
+      padding: 4px;
+      border-radius: 10px;
+      background: #fff;
+      object-fit: contain;
+    }
+
+    .splash-content {
+      display: grid;
+      flex: 1;
+      grid-template-columns: minmax(0, 1.15fr) minmax(300px, .85fr);
+      align-items: center;
+      gap: clamp(2rem, 6vw, 6rem);
+      padding-block: clamp(2rem, 4vw, 3.75rem);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: .65rem;
+      margin: 0 0 1.15rem;
+      color: var(--yellow);
+      font-size: .78rem;
+      font-weight: 800;
+      letter-spacing: .16em;
+      line-height: 1.4;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      width: 2rem;
+      height: 2px;
+      background: var(--yellow);
+      content: "";
+    }
+
+    .slogan {
+      margin: 1.5rem 0 1rem;
+      color: #f4d21f;
+      font-size: clamp(1.25rem, 2vw, 1.75rem);
+      font-weight: 800;
+      line-height: 1.3;
+    }
+
+    .splash-copy h1 {
+      max-width: 780px;
+      margin: 0;
+      font-size: clamp(3rem, 6.8vw, 6.4rem);
+      font-weight: 850;
+      letter-spacing: -.065em;
+      line-height: .94;
+    }
+
+    .splash-copy h1 span {
+      display: block;
+      margin-top: .14em;
+      color: var(--yellow);
+    }
+
+    .event-title {
+      margin: 1.4rem 0 0;
+      color: #fff;
+      font-size: clamp(1.1rem, 2vw, 1.55rem);
+      font-weight: 700;
+      letter-spacing: .015em;
+    }
+
+    .challenge-intro {
+      max-width: 660px;
+      margin: 1.35rem 0 0;
+      color: var(--muted);
+      font-size: clamp(1rem, 1.35vw, 1.2rem);
+      line-height: 1.65;
+    }
+
+    .technology-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .6rem;
+      margin: 1.5rem 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .technology-list li {
+      padding: .48rem .78rem;
+      border: 1px solid rgba(255, 255, 255, .3);
+      border-radius: 99px;
+      background: rgba(4, 13, 32, .42);
+      color: #fff;
+      font-size: .76rem;
+      font-weight: 750;
+      letter-spacing: .08em;
+    }
+
+    .challenge-card {
+      padding: clamp(1.4rem, 2.8vw, 2.35rem);
+      border: 1px solid rgba(255, 255, 255, .2);
+      border-radius: 22px;
+      background: rgba(5, 17, 39, .82);
+      box-shadow: 0 28px 80px rgba(0, 0, 0, .28);
+      backdrop-filter: blur(12px);
+    }
+
+    .card-label {
+      margin: 0;
+      color: var(--yellow);
+      font-size: .75rem;
+      font-weight: 800;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+
+    .challenge-card h2 {
+      margin: .65rem 0 .55rem;
+      font-size: clamp(1.45rem, 2.3vw, 2rem);
+      letter-spacing: -.03em;
+    }
+
+    .challenge-card > p:not(.card-label) {
+      margin: 0;
+      color: var(--muted);
+      font-size: .98rem;
+      line-height: 1.6;
+    }
+
+    .video-duration {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin: 1.4rem 0;
+      padding: 1rem 1.1rem;
+      border: 1px solid rgba(244, 210, 31, .46);
+      border-radius: 14px;
+      background: rgba(244, 210, 31, .09);
+    }
+
+    .play-mark {
+      display: grid;
+      width: 44px;
+      height: 44px;
+      flex: 0 0 auto;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--yellow);
+      color: var(--navy-deep);
+      font-size: 1rem;
+    }
+
+    .video-duration strong {
+      display: block;
+      color: var(--yellow);
+      font-size: clamp(1.2rem, 2vw, 1.65rem);
+      line-height: 1.15;
+    }
+
+    .video-duration span:last-child {
+      display: block;
+      margin-top: .2rem;
+      color: var(--white);
+      font-size: .86rem;
+      font-weight: 650;
+    }
+
+    .deadline {
+      margin-top: 1.25rem;
+      padding-top: 1.15rem;
+      border-top: 1px solid rgba(255, 255, 255, .2);
+    }
+
+    .deadline-label {
+      display: block;
+      color: var(--muted);
+      font-size: .78rem;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .planned-date {
+      display: block;
+      margin: .35rem 0 .25rem;
+      color: #fff;
+      font-size: clamp(1.05rem, 1.8vw, 1.3rem);
+      font-weight: 800;
+      line-height: 1.3;
+    }
+
+    .timing-note {
+      margin: .3rem 0 0;
+      color: var(--muted);
+      font-size: .82rem;
+      line-height: 1.5;
+    }
+
+    .results-timing { margin-top: 1rem; }
+
+    .systemc-inline-link {
+      display: inline-block;
+      margin-top: .45rem;
+      color: #fff;
+      font-size: .82rem;
+      font-weight: 700;
+      text-underline-offset: .2em;
+    }
+
+    .award-callout {
+      display: grid;
+      gap: .3rem;
+      margin-top: 1rem;
+      padding: .9rem 1rem;
+      border-left: 3px solid var(--yellow);
+      border-radius: 0 10px 10px 0;
+      background: rgba(255, 255, 255, .07);
+    }
+
+    .award-callout strong {
+      color: #fff;
+      font-size: .92rem;
+      line-height: 1.4;
+    }
+
+    .award-callout a {
+      color: #ffe45a;
+      overflow-wrap: anywhere;
+      text-underline-offset: .18em;
+    }
+
+    .submit-link { overflow-wrap: anywhere; }
+
+    .award-callout span {
+      color: var(--muted);
+      font-size: .79rem;
+      line-height: 1.45;
+    }
+
+    .submit-link {
+      display: flex;
+      min-height: 54px;
+      align-items: center;
+      justify-content: center;
+      gap: .65rem;
+      margin-top: 1rem;
+      padding: .9rem 1rem;
+      border-radius: 10px;
+      background: var(--yellow);
+      color: var(--navy-deep);
+      font-size: .98rem;
+      font-weight: 850;
+      text-align: center;
+      text-decoration: none;
+      transition: background-color .18s ease, transform .18s ease;
+    }
+
+    .submit-link:hover {
+      transform: translateY(-2px);
+      background: #ffe45a;
+    }
+
+    .submit-link:focus-visible,
+    .event-link:focus-visible {
+      outline: 3px solid #fff;
+      outline-offset: 4px;
+    }
+
+    .splash-footer {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-start;
+      gap: 1.5rem 2rem;
+      padding-top: 1.2rem;
+      border-top: 1px solid rgba(255, 255, 255, .26);
+    }
+
+    .footer-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .75rem 1.25rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .event-link {
+      color: #fff;
+      font-weight: 700;
+      text-underline-offset: .2em;
+      white-space: nowrap;
+    }
+
+    .event-link:hover { color: var(--yellow); }
+
+    .event-title a {
+      color: inherit;
+      text-decoration-color: var(--yellow);
+      text-underline-offset: .2em;
+    }
+
+    .closing-note {
+      width: min(100%, 1440px);
+      margin: 1rem auto 0;
+      color: #cfdaed;
+      font-size: .78rem;
+      line-height: 1.55;
+    }
+
+    .rules-panel {
+      width: min(calc(100% - 2rem), 1440px);
+      margin: 1.5rem auto 3rem;
+      color: var(--white);
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+    }
+
+    .rules-panel details {
+      border: 1px solid rgba(255, 255, 255, .24);
+      border-radius: 16px;
+      background: #091934;
+      box-shadow: 0 18px 48px rgba(0, 0, 0, .22);
+    }
+
+    .rules-panel summary {
+      padding: 1.15rem 1.4rem;
+      color: var(--yellow);
+      cursor: pointer;
+      font-size: 1.1rem;
+      font-weight: 800;
+      line-height: 1.4;
+    }
+
+    .rules-panel summary:focus-visible {
+      outline: 3px solid var(--yellow);
+      outline-offset: -5px;
+    }
+
+    .rules-content {
+      padding: 0 clamp(1.2rem, 4vw, 3rem) 2rem;
+      border-top: 1px solid rgba(255, 255, 255, .18);
+    }
+
+    .rules-content h2 {
+      margin: 1.8rem 0 .7rem;
+      color: var(--yellow);
+      font-size: 1.35rem;
+      line-height: 1.3;
+    }
+
+    .rules-content h2:first-child { margin-top: 1.4rem; }
+
+    .rules-content h3,
+    .rules-content h4 {
+      margin: 1.4rem 0 .55rem;
+      color: #fff;
+      font-size: 1.05rem;
+      line-height: 1.4;
+    }
+
+    .rules-content p,
+    .rules-content li {
+      max-width: 88ch;
+      color: var(--muted);
+      font-size: .95rem;
+      line-height: 1.65;
+    }
+
+    .rules-content li + li { margin-top: .4rem; }
+    .rules-content strong { color: #fff; }
+    .rules-content a {
+      color: #ffe45a;
+      overflow-wrap: anywhere;
+      text-underline-offset: .18em;
+    }
+
+    .rules-panel code {
+      color: #fff;
+      font-size: .9em;
+    }
+
+    .copyright-note {
+      width: min(calc(100% - 2rem), 1440px);
+      margin: 0 auto 2rem;
+      color: #9aa6bc;
+      font-size: .75rem;
+      line-height: 1.5;
+      text-align: left;
+    }
+
+    .copyright-note p { margin: 0 0 .7rem; }
+
+    @media (max-width: 800px) {
+      .splash-content {
+        grid-template-columns: 1fr;
+        gap: 2rem;
+        padding-block: 2.5rem;
+      }
+
+      .splash-copy h1 { font-size: clamp(3.2rem, 10vw, 5.7rem); }
+      .challenge-card { max-width: 620px; }
+    }
+
+    @media (max-width: 520px) {
+      .competition-splash { padding: 1.1rem; }
+      .splash-header { align-items: flex-start; flex-wrap: wrap; }
+      .dvcon-logo { width: min(54vw, 190px); }
+      .partner-lockup { gap: .45rem; }
+      .dragonwing-brand { width: min(42vw, 160px); height: 50px; }
+      .qbox-brand { gap: .35rem; padding-right: .45rem; font-size: .65rem; letter-spacing: .08em; }
+      .qbox-brand img { width: 36px; height: 42px; }
+      .splash-content { padding-block: 2.1rem; }
+      .splash-copy h1 { font-size: clamp(2.85rem, 12vw, 4rem); }
+      .splash-footer { align-items: flex-start; flex-direction: column; }
+      .closing-note { font-size: .72rem; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .submit-link { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="competition-splash">
+    <header class="splash-header">
+      <img class="dvcon-logo" src="dvconlogo.png" alt="Design and Verification Conference Europe">
+      <div class="partner-lockup" aria-label="Qualcomm Dragonwing™ and QBox">
+        <div class="dragonwing-brand">
+          <img src="dragonwing-logo.png" alt="Qualcomm Dragonwing™">
+        </div>
+        <a class="qbox-brand" href="https://github.com/qualcomm/qbox" target="_blank" rel="noopener noreferrer" aria-label="QBox on GitHub (opens in a new tab)">
+          <img src="qbox-logo.png" alt="">
+          <span>QBox</span>
+        </a>
+      </div>
+    </header>
+
+    <section class="splash-content" aria-label="QBox competition">
+      <div class="splash-copy">
+        <p class="eyebrow">Qualcomm Dragonwing™ technology</p>
+        <h1>QBox <span>Competition</span></h1>
+        <p class="slogan">Build it. Run it. Show it.</p>
+        <p class="event-title">Kicking off at <a href="https://dvcon-europe.org/" target="_blank" rel="noopener noreferrer" aria-label="DVCon Europe website (opens in a new tab)">DVCon Europe 2026</a></p>
+        <p class="challenge-intro">Using the Qualcomm Dragonwing™ Virtual Platform in QBox, demonstrate a use case with Qualcomm® Linux® and Qualcomm Neural Network (QNN) models from the <a href="https://aihub.qualcomm.com/models" target="_blank" rel="noopener noreferrer" aria-label="Qualcomm® AI Hub model catalog (opens in a new tab)">Qualcomm® AI Hub</a>. Explain what it does, how to run it, and show it working.</p>
+        <ul class="technology-list" aria-label="Competition technologies">
+          <li>Qualcomm Dragonwing™</li>
+          <li>QBox</li>
+          <li>Qualcomm® Linux®</li>
+          <li>QNN</li>
+        </ul>
+      </div>
+
+      <aside class="challenge-card" aria-labelledby="challenge-title">
+        <p class="card-label">Your challenge</p>
+        <h2 id="challenge-title">Make the idea clear.</h2>
+        <p>Show your use case in action. Judges will assess the submitted 30-second video.</p>
+
+        <div class="video-duration" aria-label="Judged on a 30-second video">
+          <span class="play-mark" aria-hidden="true">▶</span>
+          <span><strong>30-second video</strong><span>Show the idea. Show it working.</span></span>
+        </div>
+
+        <div class="deadline">
+          <span class="deadline-label">Closing date</span>
+          <time class="planned-date" datetime="2027-02-26">26 February 2027</time>
+        </div>
+        <div class="results-timing">
+          <span class="deadline-label">Results</span>
+          <p class="planned-date">SystemC Evolution Fika · March 2027</p>
+          <a class="systemc-inline-link" href="https://systemc.org/events/scevents/" target="_blank" rel="noopener noreferrer" aria-label="SystemC Events and History (opens in a new tab)">Check SystemC event information ↗</a>
+        </div>
+        <div class="award-callout">
+          <strong>Prizes for the best entries: Winners will receive <a href="https://www.arduino.cc/product-ventuno-q" target="_blank" rel="noopener noreferrer" aria-label="Arduino VENTUNO Q product page (opens in a new tab)">Arduino VENTUNO Q</a></strong>
+          <span><em>Where AI Takes Action</em> — The powerhouse for AI and robotics applications.</span>
+        </div>
+        <a class="submit-link" href="mailto:competition@dvcon-europe.org">Submit by email to competition@dvcon-europe.org <span aria-hidden="true">→</span></a>
+      </aside>
+    </section>
+
+    <footer class="splash-footer">
+      <ul class="footer-links" aria-label="Competition links">
+        <li><a class="event-link" href="https://github.com/qualcomm/qbox" target="_blank" rel="noopener noreferrer" aria-label="QBox on GitHub (opens in a new tab)">QBox on GitHub ↗</a></li>
+        <li><a class="event-link" href="https://dvcon-europe.org/" target="_blank" rel="noopener noreferrer" aria-label="DVCon Europe website (opens in a new tab)">DVCon Europe ↗</a></li>
+        <li><a class="event-link" href="https://systemc.org/events/scevents/" target="_blank" rel="noopener noreferrer" aria-label="SystemC Events and History (opens in a new tab)">SystemC events ↗</a></li>
+      </ul>
+    </footer>
+    <p class="closing-note">QBox is open source, and contributions to QBox will also be considered by the judges. Competition rules are below.</p>
+  </main>
+
+  <section class="rules-panel" aria-label="Competition rules">
+    <details>
+      <summary>Competition rules</summary>
+      <div class="rules-content">
+        <h2>Competition rules</h2>
+        <h3>Entry</h3>
+        <p>Using the Qualcomm Dragonwing™ Virtual Platform in QBox, demonstrate a use case with Qualcomm® Linux® and Qualcomm Neural Network (QNN) models from the <a href="https://aihub.qualcomm.com/models" target="_blank" rel="noopener noreferrer" aria-label="Qualcomm® AI Hub (opens in a new tab)">Qualcomm® AI Hub</a>. Explain what it does, how to run it, and show it working. Entries are judged on a submitted 30-second video. Send the video to <a href="mailto:competition@dvcon-europe.org">competition@dvcon-europe.org</a>.</p>
+        <p>Individual and team entries are allowed. Entrants must get their collaborators&#x27; consent before naming them or submitting their work.</p>
+        <h3>Schedule</h3>
+        <ul>
+        <li><strong>Closing date:</strong> 26 February 2027.</li>
+        <li><strong>Results:</strong> Results will be announced at a SystemC Evolution Fika in March 2027.</li>
+        </ul>
+        <h3>Prizes</h3>
+        <p>Prizes for the best entries: Winners will receive <a href="https://www.arduino.cc/product-ventuno-q" target="_blank" rel="noopener noreferrer" aria-label="Arduino VENTUNO Q (opens in a new tab)">Arduino VENTUNO Q</a>.</p>
+        <h3>Judging</h3>
+        <p>Judges will consider relevance to the Qualcomm Dragonwing™ Virtual Platform in QBox and the Qualcomm® Linux® and QNN use case; functionality shown; clarity of the explanation; and creativity.</p>
+        <h3>Originality and third-party rights</h3>
+        <p>Entries must be entrants&#x27; own original work. Use of models from the <a href="https://aihub.qualcomm.com/models" target="_blank" rel="noopener noreferrer" aria-label="Qualcomm® AI Hub (opens in a new tab)">Qualcomm® AI Hub</a> is encouraged.</p>
+        <h3>DVCon copyright form</h3>
+        <p>An entry must be accompanied by a completed <a href="https://dvcon-europe.org/authors/speaker-resources-and-guidelines" target="_blank" rel="noopener noreferrer" aria-label="DVCon copyright form (opens in a new tab)">DVCon copyright form</a>.</p>
+        <h3>Useful links</h3>
+        <ul>
+        <li><a href="https://github.com/qualcomm/qbox" target="_blank" rel="noopener noreferrer" aria-label="QBox on GitHub (opens in a new tab)">QBox on GitHub</a></li>
+        <li><a href="https://www.arduino.cc/product-ventuno-q" target="_blank" rel="noopener noreferrer" aria-label="Arduino VENTUNO Q product page (opens in a new tab)">Arduino VENTUNO Q product page</a></li>
+        <li><a href="https://aihub.qualcomm.com/models" target="_blank" rel="noopener noreferrer" aria-label="Qualcomm® AI Hub model catalog (opens in a new tab)">Qualcomm® AI Hub model catalog</a></li>
+        <li><a href="https://dvcon-europe.org/" target="_blank" rel="noopener noreferrer" aria-label="DVCon Europe (opens in a new tab)">DVCon Europe</a></li>
+        <li><a href="https://systemc.org/events/scevents/" target="_blank" rel="noopener noreferrer" aria-label="SystemC Events &amp; History (opens in a new tab)">SystemC Events &amp; History</a></li>
+        <li><a href="https://systemc.org/events/cfp/" target="_blank" rel="noopener noreferrer" aria-label="SystemC Call for Presentations (opens in a new tab)">SystemC Call for Presentations</a></li>
+        </ul>
+      </div>
+    </details>
+  </section>
+  <footer class="copyright-note">
+    <p>© Qualcomm Technologies, Inc. and/or its affiliated companies.</p>
+    <p>Snapdragon and Qualcomm branded products are products of Qualcomm Technologies, Inc. and/or its subsidiaries. Qualcomm patents are licensed by Qualcomm Incorporated.</p>
+    <p>Note: Certain services and materials may require you to accept additional terms and conditions before accessing or using those items.</p>
+    <p>References to "Qualcomm" may mean Qualcomm Incorporated, or subsidiaries or business units within the Qualcomm corporate structure, as applicable.</p>
+    <p>Qualcomm Incorporated includes our licensing business, QTL, and the vast majority of our patent portfolio. Qualcomm Technologies, Inc., a subsidiary of Qualcomm Incorporated, operates, along with its subsidiaries, substantially all of our engineering, research and development functions, and substantially all of our products and services businesses, including our QCT semiconductor business.</p>
+    <p>Materials that are as of a specific date, including but not limited to press releases, presentations, blog posts and webcasts, may have been superseded by subsequent events or disclosures.</p>
+    <p>Nothing in these materials is an offer to sell or license any of the services or materials referenced herein.</p>
+  </footer>
+</body>
+</html>
