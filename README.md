@@ -551,7 +551,7 @@ cmake --build build --parallel
 
 ## Quick Start: DragonWing SA8775P (QLI 2.0 + CDSP)
 
-See the [DragonWing guide](examples/dragonwing/README.md) for host
+See the [DragonWing guide](platforms/dragonwing/README.md) for host
 requirements and QLI firmware image details. The images are external to
 QBox.
 
@@ -564,7 +564,7 @@ cmake --build build-dragonwing --parallel
 cd build-dragonwing
 ./platforms-vp -p platform.hexagon_semihosting=true \
   --images-dir /path/to/firmware-images/exp_qli_qcow2 \
-  -l ../examples/dragonwing/configs/fw/8775/bsp/lnx/qli_2.0/conf.lua
+  -l ../platforms/dragonwing/configs/fw/8775/bsp/lnx/qli_2.0/conf.lua
 ```
 
 `--images-dir` supplies the external firmware fallback for Lua `image_file()`
@@ -604,12 +604,12 @@ path; pass the `exp_qli_qcow2` directory explicitly.
 
 - **[Ubuntu](docs/platforms/ubuntu.md)** -- Ubuntu Linux platform
   (AArch64 and RISC-V 64)
-- **[DragonWing SA8775P](examples/dragonwing/README.md)** -- QLI 2.0
+- **[DragonWing SA8775P](platforms/dragonwing/README.md)** -- QLI 2.0
   Linux with two CDSP (Hexagon) subsystems
 
 ### Tutorials and Examples
 
-- **[hello-qbox](examples/hello-qbox/)** -- Step-by-step
+- **[hello-qbox](platforms/hello-qbox/)** -- Step-by-step
   tutorial that walks you through building a minimal AArch64
   virtual platform (Cortex-A53, RAM, UART) from scratch
 

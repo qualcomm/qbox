@@ -60,7 +60,7 @@ Run from the `build` directory. `-p` options must come before `-l`.
 cd build
 ./platforms-vp -p platform.hexagon_semihosting=true \
     --images-dir <path-to>/firmware-images/exp_qli_qcow2 \
-    -l ../examples/dragonwing/configs/fw/8775/bsp/lnx/qli_2.0/conf.lua \
+    -l ../platforms/dragonwing/configs/fw/8775/bsp/lnx/qli_2.0/conf.lua \
     | tee run.log
 ```
 

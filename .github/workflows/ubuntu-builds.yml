@@ -78,14 +78,14 @@ jobs:
 
       - name: Configure hello-qbox
         run: >
-          cmake -S examples/hello-qbox -B examples/hello-qbox/build
+          cmake -S platforms/hello-qbox -B platforms/hello-qbox/build
           -DCMAKE_PREFIX_PATH="${{ runner.temp }}/qbox-install"
 
       - name: Build hello-qbox
-        run: cmake --build examples/hello-qbox/build --parallel $(nproc)
+        run: cmake --build platforms/hello-qbox/build --parallel $(nproc)
 
       - name: Run hello-qbox and check output
-        working-directory: examples/hello-qbox
+        working-directory: platforms/hello-qbox
         run: |
           set -o pipefail
           timeout 5s ./build/hello-qbox-vp --gs_luafile platform.lua \
