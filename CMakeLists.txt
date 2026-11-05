@@ -93,9 +93,25 @@ endif()
 file(
     DOWNLOAD
     https://github.com/cpm-cmake/CPM.cmake/releases/download/v0.40.5/CPM.cmake
-    ${CMAKE_CURRENT_BINARY_DIR}/cmake/CPM.cmake
+    "${CMAKE_CURRENT_BINARY_DIR}/cmake/CPM.cmake"
+    STATUS cpm_download_status
+    TIMEOUT 120
+    TLS_VERIFY ON
 )
-include(${CMAKE_CURRENT_BINARY_DIR}/cmake/CPM.cmake)
+
+list(GET cpm_download_status 0 cpm_download_code)
+list(GET cpm_download_status 1 cpm_download_message)
+
+if(NOT cpm_download_code EQUAL 0)
+    message(FATAL_ERROR "failed to download CPM.cmake: ${cpm_download_message}")
+endif()
+
+include("${CMAKE_CURRENT_BINARY_DIR}/cmake/CPM.cmake")
+
+if(NOT COMMAND CPMUsePackageLock)
+    message(FATAL_ERROR "downloaded CPM.cmake is invalid")
+endif()
+
 include(${PROJECT_SOURCE_DIR}/cmake/apply-git-patches.cmake)
 include(${PROJECT_SOURCE_DIR}/cmake/boilerplate.cmake)
 
