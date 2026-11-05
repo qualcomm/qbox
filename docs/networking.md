@@ -5,8 +5,10 @@ MAC models.
 
 ## SystemC Setup
 
-The MAC requires at least 0x8000 of memory space. Initialize
-the backend:
+The DWMAC model accesses registers at offsets through `0x1058`.
+The required mapped size depends on the platform and model use;
+`0x8000` is an example mapping size, not a verified minimum.
+Initialize the backend with a TAP device name:
 
 ```cpp
 m_dwmac.set_backend(new NetworkBackendTap("dwmac-backend", "qbox0"));
@@ -14,7 +16,9 @@ m_dwmac.set_backend(new NetworkBackendTap("dwmac-backend", "qbox0"));
 
 ## Linux Kernel Configuration
 
-Enable the DWMAC generic driver:
+The guest kernel needs a DWMAC-compatible driver. The exact
+configuration depends on the kernel and its version. For example,
+some kernels provide this option:
 
 ```
 CONFIG_DWMAC_GENERIC=y
@@ -40,9 +44,15 @@ gmac0: ethernet@200000 {
 };
 ```
 
-## Buildroot Configuration
+## Guest Networking and SSH (Optional Example)
 
-Enable SSH:
+The guest image controls its kernel, network configuration, and
+SSH server. Verify the required options and configuration against
+the kernel and image version in use. The following are optional
+Buildroot/OpenSSH examples, not a universal setup or a QBox
+requirement.
+
+To include OpenSSH in a Buildroot image, options may include:
 
 ```
 BR2_PACKAGE_OPENSSH=y
@@ -50,20 +60,25 @@ BR2_PACKAGE_OPENSSH_SERVER=y
 BR2_PACKAGE_OPENSSH_CLIENT=y
 ```
 
-Enable root password (required for SSH):
+If an image requires password authentication, set a password
+appropriate for that isolated test image. Do not use this example
+password in a real system:
 
 ```
 BR2_TARGET_GENERIC_ROOT_PASSWD=greensocs
 ```
 
-To permit root login via SSH, add to `/etc/ssh/sshd_config`:
+Enabling root SSH login is risky and is not recommended. Only in
+an isolated, disposable test image, if required, a setting such
+as the following may permit it in `/etc/ssh/sshd_config`:
 
 ```
 PermitRootLogin yes
 ```
 
-Configure the network interface. Add to
-`/etc/network/interfaces`:
+An image may configure its interface using a file such as
+`/etc/network/interfaces`. Adapt the interface name and addresses
+to the guest image and host network:
 
 ```
 auto eth0
@@ -72,9 +87,10 @@ iface eth0 inet static
     netmask 255.255.255.0
 ```
 
-## Host-Side Setup
+## Linux Host TAP Example
 
-Create and configure the TUN interface:
+The backend uses a TAP interface, not a TUN interface. On a Linux
+host, an example setup is:
 
 ```bash
 sudo ip tuntap add dev qbox0 mode tap user $(whoami)
@@ -82,7 +98,8 @@ sudo ip addr add 192.168.0.254/24 dev qbox0
 sudo ip link set dev qbox0 up
 ```
 
-After starting the virtual platform, connect via SSH:
+After starting the virtual platform, connect using the guest
+address and SSH settings configured for that image. For example:
 
 ```bash
 ssh root@192.168.0.97
@@ -93,7 +110,9 @@ ssh root@192.168.0.97
 The `virtio_net_pci` class provides a virtio network device
 that attaches to a GPEX host bridge as a PCI device. It
 requires an existing GPEX host bridge in the platform
-configuration.
+configuration. The device is added to that bridge automatically.
+The default QEMU network backend is user mode; the example also
+forwards host port 2222 to guest port 22.
 
 ### CCI Parameters
 
@@ -104,8 +123,10 @@ configuration.
 
 ### Lua Configuration Example
 
-The PCI variant needs a GPEX host bridge. The device is added
-to the bridge automatically via its constructor arguments.
+The PCI variant needs a GPEX host bridge. The bridge addresses
+and interrupt bindings below are platform-specific example
+values, not virtio-net defaults. Adapt them to the platform's
+address map and interrupt routing.
 
 ```lua
 gpex_0 = {
@@ -151,7 +172,10 @@ directly into the system address space.
 ### Lua Configuration Example
 
 The MMIO variant is configured with a memory-mapped address and
-an interrupt output binding. No PCI host bridge is needed.
+an interrupt output binding. No PCI host bridge is needed. The
+address and interrupt below are platform-specific example
+values, not defaults. The default QEMU network backend is user
+mode; this example forwards host port 2222 to guest port 22.
 
 ```lua
 virtio_net_0 = {

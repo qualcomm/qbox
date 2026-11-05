@@ -1,185 +1,80 @@
 # SystemC Router Component
 
-## Overview
+The SystemC router maps address ranges from initiator sockets to
+target sockets. It provides `b_transport`, debug transport, and
+DMI forwarding. The router adds regions from CCI socket
+parameters or through `add_target`.
 
-The SystemC Router is a high-performance TLM (Transaction Level Modeling) router component that provides address-based transaction routing between multiple initiators and targets. It features automatic region splitting, priority-based conflict resolution, and comprehensive TLM LT (b_transport) support including DMI and debug transport.
+## Address mapping
 
-## Key Features
+The default type is `gs::router<BUSWIDTH>` and uses
+`AddrMapNoCache`. Address ranges can overlap. The target with
+the lowest numeric `priority` wins. If priorities are equal,
+the mapping added most recently wins in the overlap. The default
+priority is 0. Targets can receive either relative addresses
+(the default) or absolute addresses.
 
-- **High-Performance Address Mapping**: O(log n) address lookups with LRU caching (1.2M+ TPS)
-- **Automatic Region Splitting**: Handles overlapping memory regions with priority-based resolution
-- **Priority-Based Routing**: Lower priority values = higher actual priority (0 = highest)
-- **Full TLM Support**: b_transport, transport_dbg, get_direct_mem_ptr with proper DMI invalidation
-- **Thread-Safe Design**: Compatible with SystemC simulation environment
-- **CCI Configuration**: Flexible configuration via Configuration, Control and Inspection
+The router's `add_target` convenience function accepts a target
+socket, base address, size, a relative-address flag, and an
+optional priority. Initiators bind to `target_socket`; the
+router's `initiator_socket` connects to target sockets.
 
-## Quick Start
-
-### Basic Usage
 ```cpp
-#include <router.h>
-
-// Create router and add targets
-gs::router<> my_router("my_router");
-my_router.add_target(memory.socket, 0x1000, 0x1000);  // 4KB at 0x1000
-
-// Connect initiator
-cpu.socket.bind(my_router.target_socket);
+gs::router<> router("router");
+router.add_target(memory.socket, 0x1000, 0x1000); // size 0x1000
+cpu.socket.bind(router.target_socket);
 ```
 
-### Priority-Based Overlapping Regions
-```cpp
-// Higher priority (lower number) wins in overlaps
-my_router.add_target(high_pri_mem.socket, 0x1000, 0x2000, true, 0);   // Priority 0 (highest)
-my_router.add_target(low_pri_mem.socket,  0x1500, 0x1000, true, 10);  // Priority 10 (lower)
+For CCI-based mapping, set the target socket's required
+`address` and `size` parameters. The other parameters are:
 
-// Address 0x1600 → high_pri_mem (priority 0 wins over priority 10)
-```
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `relative_addresses` | `true` | Pass the target an offset from the mapped base address |
+| `priority` | `0` | Lower numeric values have higher priority |
+| `chained` | `false` | Suppress debug output for this target when true |
 
-### CCI Configuration
-```cpp
-// Configure via CCI parameters
-broker.set_preset_cci_value("target.address", cci::cci_value(0x1000ULL));
-broker.set_preset_cci_value("target.size", cci::cci_value(0x1000ULL));
-broker.set_preset_cci_value("target.priority", cci::cci_value(10U));
-broker.set_preset_cci_value("target.relative_addresses", cci::cci_value(true));
-```
+## Cache choices
 
-## How It Works
+The default `AddrMapNoCache` does not cache address lookups.
+`router.h` exposes a cache policy template parameter, and
+`addrmap_cache_examples.h` contains the optional `LRUCache`,
+`RegionFIFOCache`, and `RegionLRUCache` examples.
+This documentation makes no performance claim for these
+choices.
 
-### Address Resolution Algorithm
-1. **Cache Lookup**: O(1) check of LRU cache for recently accessed addresses
-2. **Region Search**: O(log n) binary search in sorted address map
-3. **Priority Resolution**: Automatic selection of highest priority target in overlapping regions
-4. **Address Translation**: Relative addressing (target sees offset) or absolute addressing
+## Tests
 
-### Region Splitting
-When overlapping regions are added, the router automatically splits them into non-overlapping segments:
+The router CMake file registers these CTest names:
 
-```
-Original regions:
-- Region A: 0x1000-0x1FFF (priority 10)
-- Region B: 0x1500-0x17FF (priority 5)
+- `router-tests`
+- `router-tests-extended`
+- `router-addressmap-tests`
+- `router-cache-bench-enhanced`
+- `router-advanced-overlap-tests`
+- `router-shadowing-warning-test`
+- `router-tests-new`
+- `router-thread-safety-test`
+- `router-coverage-tests`
 
-After automatic splitting:
-- 0x1000-0x14FF → Region A (priority 10)
-- 0x1500-0x17FF → Region B (priority 5, wins due to higher priority)
-- 0x1800-0x1FFF → Region A (priority 10)
-```
+List the router tests other than `router-cache-bench-enhanced`
+without running them:
 
-### Performance Characteristics
-- **Address Lookup**: O(log n) worst case, O(1) with cache hits
-- **Cache Performance**: 64K entry LRU cache with ~90% hit rate for typical workloads
-- **Throughput**: 1.23M TPS (cached), 1.69M TPS (uncached) on modern hardware
-- **Memory Usage**: O(n) where n = number of regions
-
-## Configuration Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `address` | uint64_t | Required | Base address of the target |
-| `size` | uint64_t | Required | Size of the address range |
-| `relative_addresses` | bool | true | Use relative addressing (target sees offset) |
-| `priority` | uint32_t | 0 | Priority (lower = higher priority) |
-| `chained` | bool | false | Suppress debug output for chained targets |
-
-## Testing
-
-The router has comprehensive test coverage with 8 test suites covering 42+ individual test cases:
-
-### Test Categories
-- **Basic Functionality**: Single/multiple targets, unmapped addresses
-- **Overlapping Scenarios**: Complex priority resolution, nested regions, boundary conditions
-- **Performance**: Cached/uncached access benchmarks
-- **TLM Integration**: Debug transport, DMI, memory operations
-- **Edge Cases**: Boundary crossing, shadowing detection, error handling
-
-### Running Tests
 ```bash
-cd build
-ctest -R router -V  # Run all router tests with verbose output
+ctest --test-dir build -N -R '^router-' -E '^router-cache-bench-enhanced$'
 ```
 
-### Test Results
-All tests pass with proper debug output validation:
-- ✅ **router-tests** - Basic functionality (2 tests)
-- ✅ **router-tests-extended** - Extended features (4 tests)  
-- ✅ **router-tests-new** - Advanced scenarios (6 tests)
-- ✅ **router-addressmap-tests** - Address mapping logic (9 tests)
-- ✅ **router-cache-bench** - Performance benchmarks (2 tests)
-- ✅ **router-advanced-overlap-tests** - Complex overlaps (9 tests)
-- ✅ **router-shadowing-warning-test** - Shadowing detection (6 tests)
-- ✅ **router-memory-tests** - Memory operations (10 tests)
+To run those tests from a configured build:
 
-## Architecture
-
-### Core Components
-- **addressMap**: High-performance address resolution with automatic region splitting
-- **LRU Cache**: 64K entry cache for frequently accessed addresses  
-- **TLM Interfaces**: Full b_transport, transport_dbg, and DMI support
-- **CCI Integration**: Dynamic configuration and parameter management
-
-### Recent Improvements
-- **Fixed Region Splitting**: Resolved critical bugs in overlapping region handling
-- **Optimized Performance**: Added LRU caching and optimized data structures
-- **Enhanced Testing**: Comprehensive test suite with debug message validation
-- **Improved Documentation**: Complete API documentation and usage examples
-
-## Error Handling
-
-- **Unmapped Addresses**: Returns `TLM_ADDRESS_ERROR_RESPONSE`
-- **Boundary Violations**: Transactions crossing region boundaries are rejected
-- **Configuration Errors**: Missing parameters cause `SC_REPORT_ERROR`
-- **Shadowing Warnings**: Completely shadowed regions generate warnings
-
-## Best Practices
-
-1. **Use Consistent Priorities**: Define clear hierarchy (0=highest, 10=medium, 20=lowest)
-2. **Minimize Overlaps**: While supported, excessive overlapping impacts performance
-3. **Configure Before Binding**: Set CCI parameters before socket binding
-4. **Use Relative Addressing**: Generally more efficient for target implementation
-5. **Test Boundary Conditions**: Verify behavior at region boundaries and overlaps
-
-## Complete Example
-
-```cpp
-#include <systemc>
-#include <router.h>
-
-SC_MODULE(System) {
-    gs::router<32> router;
-    Memory high_pri_mem, low_pri_mem;
-    CPU cpu;
-    
-    SC_CTOR(System) : router("router") {
-        // Configure overlapping regions with priorities
-        router.add_target(high_pri_mem.socket, 0x1000, 0x2000, true, 0);   // High priority
-        router.add_target(low_pri_mem.socket,  0x1500, 0x1000, true, 10);  // Lower priority
-        
-        // Connect CPU
-        cpu.socket.bind(router.target_socket);
-    }
-};
-
-int sc_main(int argc, char* argv[]) {
-    cci_utils::consuming_broker broker("global_broker");
-    cci_register_broker(broker);
-    
-    System system("system");
-    sc_start();
-    return 0;
-}
+```bash
+ctest --test-dir build -R '^router-' -E '^router-cache-bench-enhanced$' --output-on-failure
 ```
 
-## Migration Notes
+The test registration is in
+[`tests/components/router/CMakeLists.txt`](../../tests/components/router/CMakeLists.txt).
+No test results or performance measurements are reported here.
 
-When migrating from older router implementations:
-- Verify priority semantics (lower = higher priority)
-- Update CCI parameter names and types  
-- Review DMI region expectations
-- Test overlapping region behavior
+## See also
 
-## See Also
-
-- [Router Tests](../../tests/base-components/router/) - Comprehensive test examples
-- [Router Interface](../common/include/router_if.h) - Base interface definition
+- [Router interface](include/router.h)
+- [Cache examples](include/addrmap_cache_examples.h)

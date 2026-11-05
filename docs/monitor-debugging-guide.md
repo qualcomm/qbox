@@ -9,10 +9,18 @@ unexpected CPU states without needing the QEMU monitor window.
 
 - A running simulation with the monitor module enabled
 - `curl` (REST endpoints)
-- `websocat` (WebSocket/QMP commands) — install with `brew install websocat`
+- `websocat` (WebSocket/QMP commands). On macOS, install it
+  with `brew install websocat`.
 
-Throughout this guide the monitor port is assumed to be **18088**.
-Adjust to match your `server_port` CCI parameter.
+The examples use monitor port **18088**. This is an example;
+use the port set by the `server_port` CCI parameter in your
+platform.
+
+The monitor provides `/sc_time`, `/pause`, `/continue`,
+`/object/`, `/object/<str>`, `/qk_status`,
+`/mcips_plugin_status`, `/sc_suspended`, `/refresh_interval`,
+`/transport_dbg/<int>/<str>`, `/biflows`, and
+`/biflow/<str>`. The examples below use only some of these routes.
 
 ---
 
@@ -21,20 +29,23 @@ Adjust to match your `server_port` CCI parameter.
 ```bash
 # Current simulation time (is it advancing?)
 curl -s http://localhost:18088/sc_time
+# Example output; the value is SystemC time, not wall-clock seconds.
 # {"sc_time_stamp":516.179}
 
 # Check again after a couple of seconds
 sleep 2 && curl -s http://localhost:18088/sc_time
 ```
 
-If `sc_time_stamp` is not advancing, the simulation is stuck.
+Compare samples over time. If `sc_time_stamp` is not advancing,
+the SystemC simulation time is not advancing. Sample values and
+intervals in this guide are illustrative, not timing guarantees.
 
 ---
 
 ## 2. CPU State — Quantum-Keeper Status
 
 ```bash
-# Which CPUs are running vs idle?
+# What states does the QK debug endpoint report?
 curl -s http://localhost:18088/qk_status | python3 -c "
 import json, sys
 for qk in json.load(sys.stdin):
@@ -45,16 +56,17 @@ for qk in json.load(sys.stdin):
 
 Example output:
 ```
-platform.cpu_0.qk          RUNNING    local=1007631952 us
-platform.cpu_1.qk          IDLE       local=1007631862 us
+# Example output only. CPU names and values depend on the platform.
+platform.cpu_0.qk          RUNNING    local=1007631952
+platform.cpu_1.qk          IDLE       local=1007631862
 ...
 ```
 
-- **RUNNING** — CPU is actively executing instructions
-- **IDLE** — CPU is in WFI/WFE (waiting for an interrupt or event)
+- `RUNNING`, `IDLE`, and `NONE` are quantum-keeper worker states.
+  They do not report guest CPU states such as WFI or WFE.
 
-If all CPUs are IDLE the simulation can still advance (virtual time
-progresses), but the guest is not executing any code.
+Do not infer guest instruction execution or wait state from these
+worker states alone.
 
 ---
 
@@ -71,36 +83,22 @@ curl -s http://localhost:18088/object/platform.gic_0 | python3 -m json.tool
 curl -s http://localhost:18088/object/platform.cpu_0 | python3 -m json.tool
 ```
 
-The response includes `child_objects`, `cci_params`, and `debug_ports`.
+The response can include `child_objects`, `cci_params`, and
+`child_dbg_ports`.
 
 ---
 
-## 4. Reading Memory via Debug Transport
+## 4. Debug Transport Implementation Bug
 
-```bash
-# Read 4 bytes at address <decimal_addr> via <socket_name>
-curl -s http://localhost:18088/transport_dbg/<addr>/<socket>
-```
+The route shape is `/transport_dbg/<int>/<str>`: an integer
+address followed by a socket name.
 
-The address is in **decimal** and the socket is the full SystemC
-hierarchical name of a TLM target socket. The read goes through
-TLM `transport_dbg`, which is non-intrusive (does not advance
-simulation time).
-
-### Example — Reading through the platform router
-
-```bash
-# Read 4 bytes at physical address 0x17A00000 (GIC distributor)
-# 0x17A00000 = 398458880 decimal
-curl -s http://localhost:18088/transport_dbg/398458880/platform.router.target_socket
-```
-
-### Limitation — GIC debug transport
-
-The QEMU-backed GIC does not properly forward the address offset in
-debug transport reads. All reads return the value at offset 0
-(GICD_CTLR). Use QMP/HMP commands instead for GIC register reads
-(see Section 6).
+**Current implementation bug:** the handler parses the address,
+but ignores it and sends a four-byte TLM debug transaction at
+address 0. This is a defect, not intended API behavior. The
+current implementation cannot read an arbitrary requested
+address. Do not use this route as a memory-read API or assume it
+reads a specific device or GIC register.
 
 ---
 
@@ -108,19 +106,23 @@ debug transport reads. All reads return the value at offset 0
 
 ```bash
 curl -s http://localhost:18088/biflows
+# Example names only. Discover names on the running platform.
 # {"biflows":["platform.backend_router_17.socket",
 #             "platform.qmp.qmp_socket.qmp_socket_router",
 #             "platform.qmp_json.qmp_socket.qmp_socket_router"]}
 ```
 
-The `qmp_json` biflow is the QMP (QEMU Machine Protocol) interface.
+The `qmp_json` name shown here is from a Dragonwing
+`auto_gen4` configuration example. Biflow names depend on the
+platform; use `/biflows` and select a name present in its output.
 
 ---
 
 ## 6. Sending QEMU Monitor Commands via QMP
 
-This is the most powerful feature for debugging. You can send any QEMU
-human monitor command through the QMP WebSocket.
+This example sends a QEMU human monitor command through a QMP
+WebSocket. The available biflow name and QEMU commands depend on
+the platform and its QEMU instance.
 
 ### Basic pattern
 
@@ -130,14 +132,15 @@ echo '{"execute": "human-monitor-command", "arguments": {"command-line": "CMD"}}
     ws://localhost:18088/biflow/platform.qmp_json.qmp_socket.qmp_socket_router
 ```
 
-> **Note:** The biflow replays a buffer of recent output to new
-> connections. Parse responses carefully — you may see old data before
-> your result.
+> **Note:** Biflow connections replay up to 1000 bytes from a
+> retained `std::string` buffer to new connections. Parse
+> responses carefully; you may see old data before your result.
 
 ### Get CPU register state
 
 ```bash
-# Registers for the currently selected CPU (usually CPU 0)
+# Registers for the currently selected CPU. CPU selection and
+# guest CPU indices depend on the platform.
 echo '{"execute": "human-monitor-command", "arguments": {"command-line": "info registers"}}' \
   | timeout 3 websocat -n1 \
     ws://localhost:18088/biflow/platform.qmp_json.qmp_socket.qmp_socket_router \
@@ -154,6 +157,10 @@ for r in returns:
 
 ### Switch CPU and read registers
 
+The CPU index `4` below is an example. Guest CPU indices and QMP
+output depend on the platform; use `info cpus` to inspect available
+CPUs.
+
 ```bash
 (sleep 0.3
  echo '{"execute": "human-monitor-command", "arguments": {"command-line": "cpu 4"}}'
@@ -165,16 +172,16 @@ for r in returns:
   2>&1 > /tmp/qmp_regs.txt
 ```
 
-### Read physical memory
+### Read physical memory (platform example)
 
 ```bash
-# Read 4 words at physical address 0x17A00000
+# Example physical address only; memory layout depends on the platform.
 echo '{"execute": "human-monitor-command", "arguments": {"command-line": "xp /4xw 0x17A00000"}}' \
   | timeout 3 websocat -n1 \
     ws://localhost:18088/biflow/platform.qmp_json.qmp_socket.qmp_socket_router
 ```
 
-### Read virtual memory (requires a CPU context)
+### Read virtual memory (address and CPU context are platform dependent)
 
 ```bash
 echo '{"execute": "human-monitor-command", "arguments": {"command-line": "x /4xw 0xffffff80600b8000"}}' \
@@ -218,7 +225,7 @@ for i in 1 2 3; do
 done
 ```
 
-### Sample CPU 0 PC repeatedly (detect loops)
+### Sample a CPU PC repeatedly (platform example)
 
 ```bash
 for i in $(seq 1 5); do
@@ -230,10 +237,11 @@ for i in $(seq 1 5); do
 done
 ```
 
-### Full GIC distributor dump via QMP
+### GIC distributor dump via QMP (platform example)
 
 ```bash
-# Read GICD_ISPENDR registers to see pending SPIs
+# Example address and register offsets only; verify them for the
+# platform. This does not establish a general GIC address.
 for i in $(seq 0 13); do
   off=$((0x200 + i * 4))
   hex=$(printf "0x17A00%03x" $off)  # adjust base address
@@ -248,7 +256,8 @@ done
 
 ## 8. Web Dashboard
 
-Open `http://localhost:18088/` in a browser for:
+Open `http://localhost:18088/` in a browser (adjust the port to
+match `server_port`) for:
 
 - **Object hierarchy browser** — click through modules, view CCI parameters
 - **Terminal emulator** — connect to serial biflows (xterm.js)
@@ -259,12 +268,14 @@ Open `http://localhost:18088/` in a browser for:
 
 ## 9. Warnings
 
-- **Do not use `/pause`** — pausing the simulation via the REST
-  endpoint can cause unexpected side effects in the SystemC scheduler
-  and may not resume cleanly.
-- **Biflow buffer replay** — WebSocket connections receive a replay of
-  recent data (up to 1000 characters). Parse responses carefully to
-  distinguish old data from fresh responses.
-- **GIC debug transport** — reads through the GIC's TLM debug
-  transport do not respect the address offset; all reads return the
-  value at offset 0. Use QMP `xp` commands instead.
+- **Pause and continue** — `/pause` suspends and `/continue`
+  unsuspends the simulation. These endpoints do not guarantee
+  guest-level pause or resume semantics.
+- **Biflow buffer replay** — WebSocket connections replay up to
+  1000 bytes from a retained `std::string` buffer. Parse
+  responses carefully to distinguish old data from fresh
+  responses.
+- **Debug transport bug** — `/transport_dbg/<int>/<str>` ignores
+  the parsed address and currently sends a four-byte transaction
+  at address 0. This is a defect, not intended API behavior; it
+  is not an arbitrary-address read API.

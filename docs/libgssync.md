@@ -1,14 +1,13 @@
 # libgssync -- Synchronization Library
 
-The GreenSocs synchronization library provides policies for
-synchronizing between an external simulator (typically QEMU)
-and SystemC. It also includes utilities such as a thread-safe
-event (`async_event`) and a real-time speed limiter for
-SystemC.
+The GreenSocs synchronization library provides policies to
+synchronize an external simulator (often QEMU) with SystemC. It
+also provides utilities such as a thread-safe `async_event` and
+a real-time speed limiter for SystemC.
 
-These are based on a proposed standard for handling the SystemC
-simulator. The library provides a backwards-compatibility
-layer, but a patched version of SystemC will perform better.
+The library includes a compatibility layer for unpatched
+SystemC. This guide makes no performance comparison between
+SystemC versions.
 
 ## Suspend/Unsuspend Interface
 
@@ -25,62 +24,71 @@ void sc_suspendable()
 
 This pair requests the kernel to atomically suspend all
 processes (using the same semantics as the thread `suspend()`
-call). The kernel will only suspend all processes together, so
-they can be suspended and unsuspended without side effects.
-Calling `suspend_all()` followed by `unsuspend_all()` has no
-effect on an individual process's suspended status.
+call). The kernel suspends all processes together, so they can
+be suspended and unsuspended without changing an individual
+process's suspended status. Calls should be paired.
 
-Calls should be paired. Multiple calls to `suspend_all()` from
-separate processes or `sc_main` are allowed -- the kernel
-suspends all processes as long as there have been more
-`suspend_all()` calls than `unsuspend_all()` calls.
+Multiple calls to `suspend_all()` from separate processes or
+`sc_main` are allowed. The kernel keeps all processes suspended
+while there are more `suspend_all()` calls than
+`unsuspend_all()` calls.
 
 ### unsuspendable / suspendable
 
-These provide an opt-out for specific processes. If any process
-has opted out, the kernel cannot `suspend_all` (since it would
-no longer be atomic). These can only be called from within a
-process, should be paired, and the default state is
-suspendable.
+These functions let a process opt out of `suspend_all()`. If any
+process has opted out, the kernel cannot suspend all processes
+atomically. Call these functions from a process and pair them.
+The default state is suspendable.
 
 ### Use Cases
 
-**Save and Restore:** When a save is requested, `suspend_all`
-is called. If any models are in an unsuspendable state, the
-simulation continues until all processes are suspendable.
+**Save and restore:** Call `suspend_all()` when a save is
+requested. If a model is unsuspendable, the simulation waits
+until all processes can be suspended.
 
-**External Sync:** When an external model injects events into
-SystemC (e.g., via `async_request_update()`), time can drift
-between simulators. Calling `suspend_all()` prevents SystemC
-from advancing. An event injected via `async_request_update`
-causes the kernel to execute the associated `update()`
-function. The update function should mark any required
-processes as unsuspendable before the end of the current delta
-cycle.
+**External sync:** An external model can inject events into
+SystemC (for example, through `async_request_update()`). A call
+to `suspend_all()` stops SystemC from advancing while the update
+runs. The update should mark required processes unsuspendable
+before the current delta cycle ends.
 
 ## Synchronization Policies
 
-The `p_sync_policy` parameter accepts the following values:
+`QemuInstance` uses the CCI parameter `sync_policy`. The
+registered factory names are:
 
 | Policy | Description |
 |--------|-------------|
-| `tlm2` | Standard TLM2 mode. No multi-thread handling in the quantum keeper. Use with `COROUTINE` TCG mode only. |
-| `multithread` | Basic multi-threaded quantum keeper. Keeps everything within approximately 2 quantums. |
-| `multithread-quantum` | Closer to TLM behavior -- processes do not advance until all reach the quantum boundary. |
-| `multithread-rolling` | Rolling synchronization. |
-| `multithread-adaptive` | Adaptive synchronization. |
+| `tlm2` | Standard TLM2 mode. The quantum keeper does not handle multiple threads. Use with `COROUTINE` TCG mode only. |
+| `multithread` | Basic multi-thread synchronization policy. |
+| `multithread-quantum` | Waits for the quantum boundary before processes advance. |
+| `multithread-rolling` | Rolling synchronization policy. |
+| `multithread-adaptive` | Adaptive synchronization policy. |
 | `multithread-unconstrained` | Allows QEMU to run at its own pace. |
-| `multithread-freerunning` | Free-running mode. |
+| `multithread-freerunning` | Free-running synchronization policy. |
 
-The default is `multithread-quantum`.
+The default for `QemuInstance.sync_policy` is
+`multithread-quantum`. The separate `Remote` module also has a
+`sync_policy` parameter, with default `multithread-unconstrained`.
+See the [factory](../systemc-components/common/src/libgssync/qk_factory.cc),
+[`QemuInstance`](../qemu-components/common/include/qemu-instance.h),
+and [`Remote`](../systemc-components/common/include/remote.h)
+source definitions.
 
 See [libqbox](libqbox.md#tlm2-quantum-keeper-synchronization-mode)
-for how sync policies interact with QEMU TCG threading modes.
+for policy compatibility with QEMU TCG modes.
 
-## Testing
+## Tests
 
-Tests are located under `tests/libgssync/`. Run them with:
+The CMake configuration registers these unit tests under
+`tests/sync/unit_tests/`: `qk_extendedif_test`,
+`qkmultithread_test`, and `qkmulti-quantum_test`. For a
+configured build, use:
 
 ```bash
-ctest --test-dir build -R libgssync
+ctest --test-dir build -R '^(qk_extendedif_test|qkmultithread_test|qkmulti-quantum_test)$'
 ```
+
+This describes registered tests only; it does not report that
+they have run or passed. See the
+[test registration](../tests/sync/unit_tests/CMakeLists.txt).

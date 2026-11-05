@@ -1,93 +1,90 @@
 # Ubuntu Linux Platform
 
-QBox includes an Ubuntu platform that boots a full Linux
-distribution on either AArch64 or RISC-V 64.
+QBox has a virtual platform configuration for Ubuntu Linux guests on
+AArch64 and RISC-V 64. This page describes image creation and manual
+build and run steps. For general build requirements, see
+[Building QBox](../building.md).
 
-## Building the Root Filesystem Image
+## Create the guest image
 
-The `platforms/ubuntu/fw/build_linux_dist_image.sh` script
-builds a customized Ubuntu OS rootfs image.
+The image script is `platforms/ubuntu/fw/build_linux_dist_image.sh`.
+It creates image files in `platforms/ubuntu/fw/Artifacts/`. The script
+states that Ubuntu 22.04.5 LTS is the tested host. This is a host note,
+not a complete QBox host support matrix. The script uses `sudo`, needs
+network access to fetch its external build tools and source, and needs
+enough free disk space for the build and image files. The checked-out
+script selects mkosi v24.3; for RISC-V it also builds OpenSBI v1.5.1.
+These steps have not been run as part of this documentation update.
 
-Prerequisites:
-- Ubuntu host machine (tested on Ubuntu 22.04.5 LTS)
-- Supported distributions: Ubuntu (jammy, noble) and
-  Fedora (39, 40) for aarch64; Ubuntu (jammy, noble) for
-  riscv64
-
-### Generated Artifacts
-
-| File | Description |
-|------|-------------|
-| `Image.bin` | Uncompressed Linux kernel image (AArch64 or RISC-V 64) |
-| `image_ext4_vmlinuz.bin` | gzip-compressed AArch64 Linux kernel image |
-| `image_ext4.img` | ext4 root filesystem image |
-| `image_ext4_initrd.img` | initramfs for bringing up the root filesystem |
-| `ubuntu.dts` | Device tree source file |
-| `ubuntu.dtb` | Device tree blob passed to the kernel by the bootloader |
-
-Use `-h` to list all available script options.
-
-## Running the Platform
-
-### Step-by-Step
-
-Generate the image:
+From the repository root, run the image script from its directory:
+Run one command for the guest architecture you want to use.
 
 ```bash
-cd platforms/ubuntu/fw/
+cd platforms/ubuntu/fw
 
-# For aarch64:
+# AArch64 guest image:
 ./build_linux_dist_image.sh -s 4G -p xorg,pciutils -a aarch64
 
-# For riscv64:
+# RISC-V 64 guest image:
 ./build_linux_dist_image.sh -s 4G -p xorg,pciutils -a riscv64
 ```
 
-The `Artifacts` directory will be created with all
-generated files.
+The script supports Ubuntu Jammy and Noble for both architectures, and
+Fedora 39 and 40 for AArch64. Without `-d` and `-r`, it uses Ubuntu
+Jammy. Use `-h` for the script options.
 
-Build QBox from the repository root:
+The generated configuration uses these files:
 
-```bash
-# For aarch64:
-cmake -B build -DLIBQEMU_TARGETS=aarch64
-cmake --build build --parallel
+| File | Purpose |
+|---|---|
+| `Image.bin` | Uncompressed Linux kernel image |
+| `ubuntu.dtb` | Device tree passed to the kernel |
+| `image_ext4_initrd.img` | Initramfs |
+| `image_ext4.img` | Guest root filesystem |
+| `fw_jump.bin` | OpenSBI firmware required by the RISC-V configuration |
 
-# For riscv64:
-cmake -B build -DLIBQEMU_TARGETS=riscv64
-cmake --build build --parallel
-```
+## Build QBox
 
-Run the virtual platform from the build directory:
-
-```bash
-# For aarch64:
-./build/platforms/platforms-vp -l ../platforms/ubuntu/conf_aarch64.lua
-
-# For riscv64:
-./build/platforms/platforms-vp -l ../platforms/ubuntu/conf_riscv64.lua
-```
-
-### Using the `ubuntu` CMake Target
-
-To build the image and run the platform in one step:
+Return to the repository root (for example, `cd ../../..` from
+`platforms/ubuntu/fw`). Configure and build the common virtual platform
+for the guest architecture:
 
 ```bash
-# For aarch64:
-cmake -B build -DUBUNTU_ARCH=aarch64 -DLIBQEMU_TARGETS=aarch64
+# AArch64:
+cmake -S . -B build -DLIBQEMU_TARGETS=aarch64
 cmake --build build --parallel
 
-# For riscv64:
-cmake -B build -DUBUNTU_ARCH=riscv64 -DLIBQEMU_TARGETS=riscv64
+# Or RISC-V 64:
+cmake -S . -B build -DLIBQEMU_TARGETS=riscv64
 cmake --build build --parallel
-
-# Build image and run:
-make -C build ubuntu
 ```
 
-## Login Credentials
+The root CMake build produces the shared `build/platforms-vp`
+executable. `LIBQEMU_TARGETS` selects the QEMU target compiled into
+QBox; it does not select a different virtual-platform executable.
 
+## Run the guest
+
+Run from the repository root. The Lua files use their own locations to
+find the image files under `platforms/ubuntu/fw/Artifacts/`.
+
+```bash
+# AArch64:
+./build/platforms-vp -l platforms/ubuntu/conf_aarch64.lua
+
+# Or RISC-V 64:
+./build/platforms-vp -l platforms/ubuntu/conf_riscv64.lua
 ```
-Username: root
-Password: root
-```
+
+The guest login credentials configured by the image script are `root`
+for both the user name and password.
+
+> **Note:** The root CMake files define an `ubuntu` convenience target,
+> but its current run command refers to `build/platforms/platforms-vp`.
+> The root build creates `build/platforms-vp`, so use the explicit build
+> and run commands above. This page does not change the CMake target.
+
+## Related guides
+
+- [Documentation index](../README.md)
+- [Building QBox](../building.md)

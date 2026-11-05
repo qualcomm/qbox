@@ -2,8 +2,8 @@
 
 ## Introduction
 The Qbox generic_lua_model is a systemc TLM model that can be described, instantiated and configured entirely from conf.lua to model very simple operations of a HW device without the need to write any C++ code. It introduces a TLM target socket interface that can be configured with specific address and size to access the conf.lua model defined registers on a specific address range, and a TLM initiator socket which can be connected for example to a router target socket and used to write to any memory location of any device model connected as a target to the router. The user can also define named target signals and initiator signals. 
-The generic_lua_model is event driven, the events sources are either register callbacks (on_pre_read, on_pre_write, on_post_read, on_post_write), target signals callbacks, or time driven events i.e. after k nanoseconds from the start of simulation, and the actions that can be committed are either data written to specific memory locations or writing true/false to specific initiator signals optionally after after_ns nanoseconds from the action systemc time.
-The model is designed to stub or mock devices which doesn’t require a sophisticated model with complex state machine to satisfy SW i.e. OS to boot and work successfully if the device is not important to function completely as described in its TRM, but only some simple actions need to be committed when a small amount of registers are written/read or some signals need to be triggered.
+The generic_lua_model is event driven. Event sources are register callbacks (`on_pre_read`, `on_pre_write`, `on_post_read`, `on_post_write`), target-signal callbacks, or actions scheduled from the start of simulation. Actions can write data to memory or write `true`/`false` to initiator signals. An action's optional `after_ns` value delays it; when omitted, the delay is 0 ns.
+The model can stub or mock a device when software needs only a small set of register or signal behaviors. This may be enough for some software or OS boot flows, but does not guarantee a successful boot or complete device behavior.
 It can be used as a fault injector as well since specific data can be written to specific memory locations or certain signals can be written to trigger certain actions after after_ns nanoseconds from the beginning of simulation. 
 
 
@@ -70,7 +70,7 @@ clk_ctl = {
 - moduletype: determines the type of the model instantiated in conf.lua, in this case it should be “generic_lua_model”.
 
 
-- args: specify the model dependencies needed by the generic_lua_model C++ constructor, in this case it should be {"&gen_top","&backup_reg_memory"} which means that a pointer to gen_top or actually any model which contains an internal reg_router instance inside it and named “reg_router" can be passed as the first parameter and a gs::gs_memory<>* which works as the register memory should be passed as the second parameter, as required by the generic_lua_model contructor. This is a convenience constructor for the model to be simply used in platforms having gen_top with internal reg_router, but there is a more generic constructor which takes a gs::reg_router<>* as its first argument.
+- args: specify the dependencies for the C++ constructor. In this example, the first argument refers to a container with a child named `reg_router`; the model looks up that child and uses it as a `gs::reg_router<>`. The second argument is the `gs::gs_memory<>` used for register storage. The other constructor takes a `gs::reg_router<>*` directly.
 
 
 - initiator_socket: this is a TLM initiator socket which can be connected to the router target socket to access any memory location in the address range of all models' TLM target sockets connected to the router.
@@ -86,7 +86,12 @@ The second example: {after_ns = 400, name = "output_sig0", output = false} means
 - registers: this table entry describes a set of registers combined with actions needed to be taken on each register, each register must have unique name, unique address and at least one action: {on_pre_read, on_pre_write, on_post_read and on_post_write}.
 The register can also have optional parameters: 
 default to assign a default value to the register.
-reg_mask to assign a R/W mask on this register, for example 0xf000000f means that only the first 4 bits and the last 4 bits of this register can be mutated (written to) externally by the initiator socket connected the reg_model_maker target_socket, but the rest of the bits (bit 4 to bit 27) are read only, so any written values to these RO bits will be ignored. The default reg_mask is 0xFFFFFFFF.
+reg_mask sets the mask applied to writes to this register. For example, 0xf000000f allows writes to the first 4 bits and the last 4 bits; writes to bits 4 through 27 do not change those bits. The default reg_mask is 0xFFFFFFFF.
+For register callback actions, optional `if_val` makes the
+action conditional: `on_pre_read` compares it with the current
+register value; the other callback types compare it with the
+transaction value. The optional `mask` and `value` fields
+control the register-value update.
 The actions that can be taken on one of  {on_pre_read, on_pre_write, on_post_read and on_post_write} action sources can be:
 1. mutate the register itself according to this procedure: 
 first set the mask of the register to be 0xFFFFFFFF to allow the mutation of all the 32 bits of the register, then apply this equation: 

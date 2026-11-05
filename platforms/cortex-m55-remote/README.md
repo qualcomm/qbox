@@ -1,57 +1,67 @@
+# Cortex-M55 Remote CPU Example
 
+This example runs a Cortex-M55 model in a separate `remote_cpu` process.
+The main SystemC virtual platform connects to it through the remote TLM
+interface. The guest firmware writes to a PL011 UART and waits for
+interrupts.
 
-[//]: # (SECTION 0)
-# Virtual Platform of ARM Cortex M55
+## Prerequisites
 
-## 1. Overview
+Use the standard QBox build prerequisites in
+[Building QBox](../../docs/building.md). The old Ubuntu 18.04 reference
+is not a current host recommendation. This guide does not state a
+verified host support matrix.
 
-This release contains an example of a virtual platform based on an ARM Cortex M55
+The repository includes the `cortex-m55.bin` firmware image. To rebuild
+it after changing the firmware source, install `arm-none-eabi-gcc`,
+`arm-none-eabi-objcopy`, and `xxd`.
 
-The CPU model is n a remote process, which is connected to from the main process via a remote procedure call mechanism which uses the SystemC TLM-2.0 (IEEE 1666) API.
+## Build
 
-## 2. Requirements
-
-You can build this release natively on Ubuntu 18.04.
-
-Install dependencies:
-```bash
-apt update && apt upgrade -y
-apt install -y make cmake g++ wget flex bison unzip python pkg-config libpixman-1-dev libglib2.0-dev
-```
-
-
-## 4. Build the platform
+From the repository root:
 
 ```bash
-cmake -B build [OPTIONS]
-make -j
+cmake -S . -B build -DLIBQEMU_TARGETS=aarch64
+cmake --build build --parallel
 ```
 
-This will take some time.
+The root CMake build includes this example. It produces the dedicated
+`build/cortex-m55-vp` runner and `build/remote_cpu` beside it.
 
-## 5. Run
-### Run the Virtual Platform
+To rebuild the bundled firmware, run `make` from
+`platforms/cortex-m55-remote/fw/cortex-m55/` after installing the
+firmware tools:
+
 ```bash
-cd ../
-./build/vp --gs_luafile conf.lua
+cd platforms/cortex-m55-remote/fw/cortex-m55
+make
 ```
-You should see the following output:
+
+## Run
+
+Run from the repository root:
+
 ```bash
-
-        SystemC 2.3.4_pub_rev_20200101-GreenSocs --- Sep 21 2021 14:57:41
-        Copyright (c) 1996-2019 by all Contributors,
-        ALL RIGHTS RESERVED
-@0 s /0 (lua): Parse command line for --gs_luafile option (3 arguments)
-@0 s /0 (lua): Option --gs_luafile with value conf.lua
-Lua file command line parser: parse option --gs_luafile conf.lua
-@0 s /0 (lua): Read lua file 'conf.lua'
+./build/cortex-m55-vp \
+    --gs_luafile platforms/cortex-m55-remote/conf.lua
 ```
 
-## 5. Making use of the CPU model in other simulation contexts.
+Use this Cortex-M55-specific runner, not the generic `platforms-vp`
+executable. The main program sets the `executable_path` parameter to its
+own directory. The platform config uses it to find `remote_cpu` beside
+the runner. The config loads the firmware image from this example's
+`fw/` directory. The firmware writes its status and interrupt messages
+to the terminal and then waits for interrupts.
 
-The remove CPU model may be used in any systemc context, a convenience class is provided in main.cc which can simply be placed in a SystemC model. The class handles the executable name for the remote model and passing arguments to it (which can, for intance, be used to specify configuration parameters).
+## Optional tests
 
-The remote device can be found in remote_cpu.cc, which contains the actual CPU model. Some configuration parameters are pre-set in this model. Confguration parameters can be passed on the command line using the syntax ```-p key=value```, a lua configuration file can be added (with the syntax ```--gs_luafile <filename>```) or CCI parameters can be automatically transferred to the remote model (all parameters under the CPUPassRPC class will be automatically transferred).
+The CTest test for this example is separate from the normal build and
+run steps. It requires Python 3 and the `pexpect` Python package. On
+Linux, the test creates a TAP interface named `qbox0`, so the test
+process needs permission to create it. These are test requirements,
+not requirements for normal platform execution.
 
-See remote_cpu.cc for some of the parameters which may be useful to alter, specifically the number of IRQ's
+## Related guides
 
+- [QBox build instructions](../../docs/building.md)
+- [Documentation index](../../docs/README.md)

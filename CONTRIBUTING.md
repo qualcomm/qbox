@@ -55,7 +55,7 @@ In general, contributors should develop on branches based off of `main` and pull
 
 Here are a few things you can do that will increase the likelihood of your pull request to be accepted:
 
-- Follow the existing style where possible. **INSERT LINK TO STYLE, e.g. PEP8 for python**
+- For C/C++ code, use [`scripts/fmt.sh`](scripts/fmt.sh) with the repository [`.clang-format`](.clang-format) configuration.
 - Write tests.
 - Keep your change as focused as possible.
   If you want to make multiple independent changes, please consider submitting them as separate pull requests.

@@ -12,8 +12,13 @@ from scratch, using a minimal bare-metal AArch64 program as the
 firmware. The result is the `hello-qbox` example: a Cortex-A53 with
 RAM and a UART that prints `Hello from Qbox!` to your terminal.
 
-For prerequisites and Qbox build instructions, see the
-[Qbox README](../../README.md).
+For general Qbox build instructions, see
+[Building QBox](../../docs/building.md).
+
+This directory is a standalone example. The main Qbox build does not
+build or install it. Build and install Qbox first, then configure this
+example so CMake can find the installed `qbox` package. The optional
+AArch64 firmware cross-compiler is separate from the host build tools.
 
 ---
 
@@ -472,13 +477,15 @@ is the only way to stop it.
 ### Build the VP and firmware
 
 First, build and install the main Qbox project. From the Qbox
-root directory:
+root directory (see [Building QBox](../../docs/building.md) for
+general prerequisites):
 
 ```bash
-cmake -B build . \
-    -DCMAKE_INSTALL_PREFIX=$(pwd)/build/install \
+QBOX_INSTALL_PREFIX="$(pwd)/build/install"
+cmake -S . -B build \
+    -DCMAKE_INSTALL_PREFIX="$QBOX_INSTALL_PREFIX" \
     -DLIBQEMU_TARGETS=aarch64
-cmake --build build --parallel $(nproc)
+cmake --build build --parallel
 cmake --install build
 ```
 
@@ -490,17 +497,29 @@ aarch64.so`). Without it, the VP fails at runtime with
 This installs the Qbox CMake package that the standalone example
 finds with `find_package(qbox)`.
 
+Keep the configured install prefix for the standalone example. Qbox's
+install destinations are set during configuration, so install without
+overriding the prefix on the `cmake --install` command.
+
 Then, from this directory, configure and build the standalone
-example against that install:
+example against that same install. For the prefix above, the relative
+path from this directory is `../../build/install`:
 
 ```bash
-cmake -S . -B build -DCMAKE_PREFIX_PATH=<path-to-qbox-install-prefix>
+cmake -S . -B build -DCMAKE_PREFIX_PATH=../../build/install
 cmake --build build
 ```
 
-`-DCMAKE_PREFIX_PATH` must point to the Qbox install prefix from
-the first step. For example, if you used `$(pwd)/build/install`
-above, it is `../../build/install` from this directory. The
+The standalone example uses `find_package(qbox REQUIRED)`. If CMake
+cannot find the package, check that the main project was installed
+and set `-DCMAKE_PREFIX_PATH` to that install prefix. This setting
+does not build Qbox for you.
+
+`-DCMAKE_PREFIX_PATH` must point to the same prefix configured in
+the first step. If you choose a different prefix, set
+`CMAKE_INSTALL_PREFIX` to it before building Qbox, install without
+an install-time prefix override, and set `CMAKE_PREFIX_PATH` to that
+same location here. The
 `hello-qbox-vp` binary is produced in this directory's `build/`
 subdirectory, not under the Qbox install tree.
 
@@ -773,3 +792,8 @@ platform.gic_0.num_cpus = 2
   ```bash
   --param 'platform.qemu_inst.qemu_args.-d="in_asm"'
   ```
+
+## Related guides
+
+- [QBox build instructions](../../docs/building.md)
+- [Documentation index](../../docs/README.md)
