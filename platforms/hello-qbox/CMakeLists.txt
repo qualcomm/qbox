@@ -41,5 +41,5 @@ else()
     message(WARNING
         "aarch64-linux-gnu-gcc not found; "
         "hello.elf must be built manually. "
-        "See examples/hello-qbox/README.md.")
+        "See platforms/hello-qbox/README.md.")
 endif()

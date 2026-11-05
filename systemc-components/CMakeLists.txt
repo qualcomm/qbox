@@ -31,7 +31,7 @@ endif()
 
 
 # SA8775P QLI 2.0 + CDSP (Hexagon) platform models, used by
-# examples/dragonwing.
+# platforms/dragonwing.
 option(ENABLE_DRAGONWING "Build the DragonWing (SA8775P QLI + CDSP) models" OFF)
 if(ENABLE_DRAGONWING)
     set(DRAGONWING_COMPONENTS

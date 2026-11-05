@@ -1,5 +1,5 @@
 /build*/
-/examples/hello-qbox/build*/
+/platforms/hello-qbox/build*/
 CMakeUserPresets.json
 /debug*/
 /install*/
@@ -15,7 +15,7 @@ __pycache__
 /.cache
 
 # Pre-generated register-model archives for the DragonWing (SA8775P) components
-!/examples/dragonwing/configs/fw/SA8775P.cc_config.zip
+!/platforms/dragonwing/configs/fw/SA8775P.cc_config.zip
 !/systemc-components/aoss_pmic_arb_pmic_arb_core/src/*.cc_config.zip
 !/systemc-components/apss_hm_apss_shared_apss_intu/src/*.cc_config.zip
 !/systemc-components/csr/src/*.cc_config.zip
