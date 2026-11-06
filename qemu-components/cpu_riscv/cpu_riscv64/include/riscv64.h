@@ -26,6 +26,7 @@ public:
 
     // CCI parameters for RISC-V CPU configuration
     cci::cci_param<uint64_t> p_resetvec;
+    cci::cci_param<bool> p_start_powered_off;
     cci::cci_param<bool> p_pmp;
     cci::cci_param<bool> p_smaia;
     cci::cci_param<bool> p_ssaia;
@@ -53,6 +54,7 @@ public:
         , irq_in("irq_in", 32)
         // Initialize CCI parameters with default values
         , p_resetvec("resetvec", 0x0, "Reset vector address")
+        , p_start_powered_off("start_powered_off", false, "Start and reset the CPU in powered-off state")
         , p_pmp("pmp", false, "Enable Physical Memory Protection")
         , p_smaia("smaia", false, "Enable Smaia (AIA M-mode CSRs)")
         , p_ssaia("ssaia", false, "Enable Ssaia (AIA S-mode CSRs)")
@@ -72,6 +74,7 @@ public:
 
         // Set properties from CCI parameters
         cpu.set_prop_int("resetvec", p_resetvec);
+        cpu.set_prop_bool("start-powered-off", p_start_powered_off);
         cpu.set_prop_bool("pmp", p_pmp);
         if (p_smaia) {
             cpu.set_prop_bool("smaia", true);
