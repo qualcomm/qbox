@@ -1,4 +1,7 @@
 gs_create_dymod(monitor)
+if(NOT WITHOUT_QEMU AND TARGET libqemu)
+    target_compile_definitions(monitor PRIVATE QBOX_MONITOR_HAS_MCIPS)
+endif()
 if(TARGET Crow::Crow)
     target_link_libraries(monitor PRIVATE Crow::Crow)
 endif()
