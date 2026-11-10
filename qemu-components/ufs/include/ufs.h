@@ -1,8 +1,7 @@
 /*
- * This file is part of libqbox
- * Copyright (c) 2025 Qualcomm Innovation Center, Inc. All Rights Reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
- * SPDX-License-Identifier: BSD-3-Clause
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
 #ifndef _LIBQBOX_COMPONENTS_UFS_H
@@ -13,11 +12,13 @@
 #include <module_factory_registery.h>
 #include <device.h>
 #include <ports/target.h>
+#include <ports/initiator.h>
 #include <ports/qemu-initiator-signal-socket.h>
+#include <ports/target-signal-socket.h>
 #include <tlm_sockets_buswidth.h>
 #include <vector>
 
-class ufs : public QemuDevice
+class ufs : public QemuDevice, public QemuInitiatorIface
 {
 public:
     class Device : public QemuDevice
@@ -47,6 +48,20 @@ public:
 public:
     QemuTargetSocket<> q_socket;
     QemuInitiatorSignalSocket irq_out;
+    /*
+     * Optional DMA initiator. When bound (e.g. to an SMMU TBU upstream
+     * socket), all controller DMA (UTRD/UCD/PRDT data) is issued through it
+     * so that device IOVAs are translated. When unbound, DMA goes to QEMU
+     * system memory as before.
+     */
+    QemuInitiatorSocket<> dma_socket;
+    /*
+     * Platform reset. Drops every DMI/IOMMU mapping cached by the DMA
+     * initiator so that DMA after reboot is re-translated against the reset
+     * SMMU state. (QEMU device state itself is reset by the QEMU system
+     * reset.)
+     */
+    TargetSignalSocket<bool> reset;
 
 protected:
     cci::cci_param<std::string> p_serial;
@@ -54,6 +69,7 @@ protected:
     cci::cci_param<uint8_t> p_nutmrs;
     cci::cci_param<bool> p_mcq;
     cci::cci_param<uint8_t> p_mcq_maxq;
+    cci::cci_param<uint32_t> p_mem_size;
     std::vector<Device*> m_devices;
 
 public:
@@ -62,13 +78,23 @@ public:
         : QemuDevice(n, inst, "ufs-sysbus")
         , q_socket("mem", inst)
         , irq_out("irq_out")
+        , dma_socket("dma", *this, inst)
+        , reset("reset")
         , p_serial("serial", "", "controller serial")
         , p_nutrs("nutrs", 32, "number of UTP transfer request slots")
         , p_nutmrs("nutmrs", 8, "number of UTP task management request slots")
         , p_mcq("mcq", false, "multiple command queue support")
         , p_mcq_maxq("mcq_maxq", 2, "MCQ maximum number of queues")
+        , p_mem_size("mem.size", 0, "UFS sysbus MMIO aperture size")
     {
         set_id(name());
+        reset.register_value_changed_cb([this](bool value) {
+            if (value && dma_socket.size() > 0) {
+                m_inst.get().lock_iothread();
+                dma_socket.reset();
+                m_inst.get().unlock_iothread();
+            }
+        });
     }
 
     void add_device(Device& dev)
@@ -89,6 +115,10 @@ public:
         if (!p_nutmrs.is_default_value()) m_dev.set_prop_uint("nutmrs", p_nutmrs.get_value());
         if (!p_mcq.is_default_value()) m_dev.set_prop_bool("mcq", p_mcq.get_value());
         if (!p_mcq_maxq.is_default_value()) m_dev.set_prop_uint("mcq-maxq", p_mcq_maxq.get_value());
+        m_dev.set_prop_uint("mmio-size", p_mem_size.get_value());
+        if (dma_socket.size() > 0) {
+            dma_socket.init(m_dev, "dma");
+        }
     }
 
     void end_of_elaboration() override
@@ -107,6 +137,13 @@ public:
             device->ufs_realize(root_bus);
         }
     }
+
+    /* QemuInitiatorIface */
+    void initiator_customize_tlm_payload(TlmPayload& payload) override {}
+    void initiator_tidy_tlm_payload(TlmPayload& payload) override {}
+    sc_core::sc_time initiator_get_local_time() override { return sc_core::sc_time_stamp(); }
+    void initiator_set_local_time(const sc_core::sc_time& t) override {}
+    void initiator_async_run(qemu::Cpu::AsyncJobFn job) override {}
 };
 
 extern "C" void module_register();
