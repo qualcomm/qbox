@@ -42,6 +42,7 @@ if(ENABLE_DRAGONWING)
         wdog
         mpm_control
         ipcc
+        rsc
         qupv3_qupv3_se_wrapper_se0
         aoss_pmic_arb_pmic_arb_core
         apss_hm_apss_shared_apss_intu

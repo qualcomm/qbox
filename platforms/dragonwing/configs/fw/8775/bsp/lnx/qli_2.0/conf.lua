@@ -4,22 +4,14 @@ dofile(top() .. "../../../../utils.lua")
 local ARM_NUM_CPUS = 8;
 local NUM_HEXAGON_CLUSTERS = 3
 
--- QLI/PAS owns CDSP release. qdsp6.lua consumes this while constructing
--- the Hexagon CPU objects, before elaboration.
 QLI_PAS_BOOT = true
 
--- Match the known-good QLI/QQVP CPU setup.  PSCI is handled by the EL3
--- monitor's SMC path; the QQVP CPU model must not install its own conduit.
 PSCI_CONDUIT = "disabled"
 
 QLI_SMEM_IMAGE = image_file("smem_init.bin")
 dofile_with_args(top() .. "../../../SA8775P_conf.lua", "--included")
 
--- Disabled while testing the clean boss QBox, which does not provide the
--- thread_safe_reentrant SMMU TBU parameter.
--- platform.tbu_0.thread_safe_reentrant = true
-
--- simple1.dtb inherits these SMMU IRQs from lemans.dtsi.  The common
+-- sa8775-qli.dtb inherits these SMMU IRQs from lemans.dtsi.  The common
 -- SA8775P table assumes a contiguous range and is not valid for this QLI
 -- device tree.  SMMUv2 maps context-bank N to context interrupt N, after
 -- the two global interrupts.  The model has one global output; use the
@@ -47,8 +39,7 @@ for cb, irq in ipairs(qli_smmu_context_irqs) do
     platform.smmu_0["irq_context_" .. (cb - 1)] = {bind = "&gic_0.spi_in_" .. irq}
 end
 
-device_tree = image_file("simple1.dtb")
-
+device_tree = image_file("sa8775-qli.dtb")
 
 filesystem_image = image_file("rootfs.ext4")
 linux_image = image_file("Image")
@@ -175,20 +166,6 @@ tableMerge(platform, {
         blkdev_str = "file=" .. filesystem_image .. ",format=" .. filesystem_format .. ",if=none,readonly=off"
     },
 
-    -- virtioblk_1 = {
-    --     moduletype = "virtio_mmio_blk",
-    --     args = {"&platform.qemu_inst"},
-    --     mem = {
-    --         address = 0x1c0e0000,
-    --         size = 0x2000,
-    --         bind = "&router.initiator_socket"
-    --     },
-    --     irq_out = {
-    --         bind = "&gic_0.spi_in_47"
-    --     },
-    --     blkdev_str = "file=" .. image_file("cdsp-fw.img") .. ",format=raw,if=none,readonly=off"
-    -- },
-
     charbackend_stdio_0 = {
         moduletype = "char_backend_stdio",
         read_write = true,
@@ -224,6 +201,14 @@ tableMerge(platform, {
         backend_socket = {
             bind = "&charbackend_stdio_0.biflow_socket"
         }
+    },
+
+    apps_rsc = {
+        moduletype = "rsc";
+        target_socket = {address = 0x18200000, size = 0x40000, bind = "&router.initiator_socket"};
+        irq_0 = {bind = "&gic_0.spi_in_3"};
+        irq_1 = {bind = "&gic_0.spi_in_4"};
+        irq_2 = {bind = "&gic_0.spi_in_5"};
     },
 
     -- EL3 SCM/PAS bridge. EL3 writes these registers during PAS shutdown
@@ -419,14 +404,9 @@ platform["gpex_0"] = {
     },
     ecam_iface = {
         address = 0x40000000,
-        size    = 0x10000000,  -- 256MB
+        size    = 0x10000000,  
         bind    = "&router.initiator_socket"
     },
-    -- ecam_iface = {
-    --     address = 0x43B50000,
-    --     size = 0x0010000000,
-    --     bind = "&router.initiator_socket"
-    -- },
     mmio_iface_high = {
         address = 0x400000000,
         size = 0x200000000,
@@ -446,64 +426,8 @@ platform["gpex_0"] = {
     }
 };
 
--- PCIe root complex (generic ECAM) matching DT: pcie@40000000
--- platform.pcie = {
---     type = "qemu_gpex",
-
---     -- ECAM: 256MB @ 0x40000000
---     ecam_iface = {
---         address = 0x40000000,
---         size    = 0x10000000,
---     },
-
---     -- IO window: 1MB @ 0x60200000
---     io_iface = {
---         address = 0x60200000,
---         size    = 0x00100000,
---     },
-
---     -- non-prefetchable MMIO: 0x60300000..0x7fffffff
---     mmio_iface = {
---         address = 0x60300000,
---         size    = 0x1fd00000,
---     },
-
---     -- prefetchable 64-bit MMIO (optional but recommended since DT now advertises it)
---     mmio_iface_high = {
---         address = 0x400000000,
---         size    = 0x200000000,
---     },
-
---     -- legacy INTx -> SPIs 541-544 (matches DT interrupt-map)
---     irq = { 541, 542, 543, 544 },
--- }
-
--- platform.virtgpu = {
---     type = "virtio_gpu_gl_pci",
---     pcie = platform.pcie,
--- }
-
 platform.display = { type = "sdl", gl = true }
 
--- gpu = {
---   moduletype = "virtio_gpu_gl_pci";
---   args = {"&platform.qemu_inst", "&platform.pcie"};
--- }
--- gpu = {
---     moduletype = "virtio_gpu_gl_pci";
---     args = {"&platform.qemu_inst", "&platform.gpex_0"};
--- }
--- display = {
---     moduletype = "display";
---     args = {"&platform.gpu_0"};
--- }
--- platform.gpex_0 = platform.pcie;
-
-
-                -- gpu = {
-                --     moduletype = "virtio_gpu_gl_pci";
-                --     args = {"&platform.qemu_inst", "&platform.gpex_0"};
-                -- }
 print("kernel is loaded at: 0x" .. string.format("%x", _KERNEL64_LOAD_ADDR));
 print("dtb is loaded at:    0x" .. string.format("%x", _DTB_LOAD_ADDR));
 print("initrd is loaded at: 0x" .. string.format("%x", _INITRD_LOAD_ADDR));
@@ -518,9 +442,6 @@ for i=0,(ARM_NUM_CPUS-1) do
     end
     platform["cpu_"..tostring(i)]["rvbar"] = _EL3_MONITOR_ADDR;
 end
-
--- Hexagon DSPs are enabled: hexagon_thread_0 starts powered on (default from qdsp6.lua)
--- To disable Hexagon, pass --param platform.disable_hexagon=true at runtime
 
 for i = 0, (ARM_NUM_CPUS - 1) do
     platform["cpu_" .. tostring(i)]["has_el3"] = true;
