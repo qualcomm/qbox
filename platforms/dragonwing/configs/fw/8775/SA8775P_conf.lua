@@ -4,11 +4,6 @@ print("8755 vsoc Lua config running. . . ");
 
 -- inherit HW base configurations --
 dofile_with_args(top() .. "../common_conf/auto_gen4/auto_gen4.lua", "--included")
-
-if rawget(_G, "QLI_PAS_BOOT") == true then
-    dofile(top() .. "qli_cdsp_clock_models.lua")
-end
-
 -----------------------------------------------------------
 --------- override SOC HW specific configurations ---------
 -----------------------------------------------------------
