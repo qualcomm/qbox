@@ -54,8 +54,11 @@ else
         Darwin*)
             MAJOR_VERSION=$(sw_vers -productVersion | cut -d "." -f 1)
             readonly MAJOR_VERSION
-
-            if [ "${MAJOR_VERSION}" = "26" ]; then
+            if [ "${MAJOR_VERSION}" = "27" ]; then
+                brew install asio bison cmake dtc jpeg-turbo libelf libslirp libzip \
+                    lld llvm meson ninja python3 sdl2 pixman
+                pip install --user pexpect numpy
+            elif [ "${MAJOR_VERSION}" = "26" ]; then
                 brew install asio bison cmake dtc jpeg-turbo libelf libslirp libzip \
                     lld llvm meson ninja python3 sdl2
                 pip install --user pexpect numpy
