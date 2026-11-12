@@ -553,8 +553,7 @@ private:
             break;
         }
 
-        info << " address:"
-             << "0x" << std::hex << trans.get_address();
+        info << " address:" << "0x" << std::hex << trans.get_address();
         info << " len:" << trans.get_data_length();
         unsigned char* ptr = trans.get_data_ptr();
         if ((trans.get_command() == tlm::TLM_READ_COMMAND && trans.get_response_status() == tlm::TLM_OK_RESPONSE) ||
@@ -673,6 +672,17 @@ private:
         }
 
         stamp_txn(id, trans);
+        struct transaction_guard {
+            router& owner;
+            tlm::tlm_generic_payload& txn;
+            const sc_dt::uint64 address;
+            const int id;
+            ~transaction_guard()
+            {
+                txn.set_address(address);
+                owner.unstamp_txn(id, txn);
+            }
+        } guard{ *this, trans, addr, id };
         if (!ti->chained) {
             SCP_TRACE((D[ti->index]), ti->name) << "Start b_transport :" << txn_tostring(ti.get(), trans);
         }
@@ -686,7 +696,6 @@ private:
         if (!ti->chained) {
             SCP_TRACE((D[ti->index]), ti->name) << "Completed b_transport :" << txn_tostring(ti.get(), trans);
         }
-        unstamp_txn(id, trans);
     }
 
     /**
@@ -706,6 +715,11 @@ private:
         lazy_initialize();
 
         sc_dt::uint64 addr = trans.get_address();
+        struct address_guard {
+            tlm::tlm_generic_payload& txn;
+            const sc_dt::uint64 address;
+            ~address_guard() { txn.set_address(address); }
+        } guard{ trans, addr };
         auto ti = decode_address(trans);
         if (!ti) {
             trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
@@ -967,8 +981,7 @@ private:
             ti_ptr->priority = gs::cci_get_d<uint32_t>(m_broker, name + ".priority", 0);
 
             SCP_INFO((D[ti_ptr->index]), ti_ptr->name)
-                << "Address map " << ti_ptr->name << " at address "
-                << "0x" << std::hex << ti_ptr->address << " size "
+                << "Address map " << ti_ptr->name << " at address " << "0x" << std::hex << ti_ptr->address << " size "
                 << "0x" << std::hex << ti_ptr->size << (ti_ptr->use_offset ? " (with relative address) " : " ")
                 << "priority : " << ti_ptr->priority;
             if (ti_ptr->chained) SCP_DEBUG(())("{} is chained so debug will be suppressed", ti_ptr->name);
@@ -979,8 +992,8 @@ private:
                 std::string alias_name = ti_ptr->name + ".aliases." + n;
                 uint64_t address = gs::cci_get<uint64_t>(m_broker, alias_name + ".address");
                 uint64_t size = gs::cci_get<uint64_t>(m_broker, alias_name + ".size");
-                SCP_INFO((D[ti_ptr->index]), ti_ptr->name)("Adding alias {} {:#x} (size: {})", alias_name, address,
-                                                           size);
+                SCP_INFO((D[ti_ptr->index]), ti_ptr->name)
+                ("Adding alias {} {:#x} (size: {})", alias_name, address, size);
 
                 // Create a new shared_ptr for the alias, copying from the current ti_ptr state
                 std::shared_ptr<target_info> alias_ti_ptr = std::make_shared<target_info>(*ti_ptr);
@@ -1039,7 +1052,10 @@ public:
 public:
     /// @brief Destructor for the router module.
     /// Cleans up any remaining PathIDExtension objects in the pool.
-    ~router() { m_pathIDPool.clear(); }
+    ~router()
+    {
+        for (auto* extension : m_pathIDPool) delete extension;
+    }
 
     /**
      * @brief Adds a target to the router's address map.

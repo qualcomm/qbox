@@ -91,8 +91,8 @@ class gs_memory : public sc_core::sc_module
         void doreset()
         {
             SCP_WARN((), m_mem.name())("Reset (block at offset {:x})", m_address);
-            for (unsigned int i = 0; i < N; i++) {
-                if (m_sub_blocks[i]) m_sub_blocks[i]->doreset();
+            for (auto& block : m_sub_blocks) {
+                if (block) block->doreset();
             }
             if (m_mem.p_init_mem && m_ptr) {
                 memset(m_ptr, m_mem.p_init_mem_val, m_len);
@@ -240,6 +240,12 @@ private:
     cci::cci_broker_handle m_broker;
 
 protected:
+    virtual void reset_memory()
+    {
+        m_sub_block->doreset();
+        load.doreset(true);
+    }
+
     virtual bool get_direct_mem_ptr(int id, tlm::tlm_generic_payload& txn, tlm::tlm_dmi& dmi_data)
     {
         if (!p_dmi) return false;
@@ -257,8 +263,7 @@ protected:
             return false;
         }
 
-        SCP_TRACE(()) << " : DMI access to address "
-                      << "0x" << std::hex << addr;
+        SCP_TRACE(()) << " : DMI access to address " << "0x" << std::hex << addr;
 
         if (p_rom)
             dmi_data.allow_read();
@@ -499,8 +504,7 @@ public:
         reset.register_value_changed_cb([&](bool value) {
             if (value) {
                 SCP_WARN(()) << "Reset";
-                m_sub_block->doreset();
-                load.doreset(value);
+                reset_memory();
             }
         });
     }
