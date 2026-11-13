@@ -16,6 +16,9 @@
 #include <vector>
 #include <map>
 #include <atomic>
+#include <cassert>
+#include <mutex>
+#include <utility>
 
 #include <libqemu-cxx/target_info.h>
 #include <libqemu-cxx/exceptions.h>
@@ -67,6 +70,8 @@ typedef void (*LibQemuGLScanoutTextureFn)(DisplayChangeListener*, uint32_t, bool
 typedef void (*LibQemuGLUpdateFn)(DisplayChangeListener*, uint32_t, uint32_t, uint32_t, uint32_t);
 
 typedef bool (*LibQemuIsCompatibleDclFn)(DisplayGLCtx*, DisplayChangeListener*);
+
+class QemuInstance;
 
 namespace qemu {
 
@@ -134,6 +139,7 @@ public:
     void vm_start();
     void vm_stop_paused();
 
+    /* prefer using IothreadLockGuard over manual lock / unlocks */
     void lock_iothread();
     void unlock_iothread();
     bool is_iothread_locked() const;
@@ -240,6 +246,65 @@ public:
     RcuReadLock& operator=(const RcuReadLock&) = delete;
     RcuReadLock(RcuReadLock&&);
     RcuReadLock& operator=(RcuReadLock&&);
+};
+
+class IothreadLockGuard final
+{
+    explicit IothreadLockGuard(LibQemu& qemu, bool lock): m_qemu(qemu), m_acquired_lock(lock)
+    {
+        if (lock) {
+            m_qemu.lock_iothread();
+        }
+    }
+
+public:
+    // Take the BQL
+    explicit IothreadLockGuard(LibQemu& qemu): IothreadLockGuard(qemu, true) {}
+
+    // Create the guard while the lock is already taken
+    explicit IothreadLockGuard(LibQemu& qemu, std::adopt_lock_t): m_qemu(qemu), m_acquired_lock(true)
+    {
+        assert(m_qemu.is_iothread_locked());
+    }
+
+    // Lock iif the BQL is not already taken in the current host thread
+    static IothreadLockGuard acquire_if_unlocked(LibQemu& qemu)
+    {
+        return IothreadLockGuard{ qemu, !qemu.is_iothread_locked() };
+    }
+
+    // Explicitly release ownership of the BQL by the guard
+    // Concretely, this guard will not unlock BQL on destruction after this method is called
+    void release_ownership() noexcept { m_acquired_lock = false; }
+
+    void unlock()
+    {
+        if (m_acquired_lock) {
+            m_qemu.unlock_iothread();
+            m_acquired_lock = false;
+        }
+    }
+
+    ~IothreadLockGuard() { unlock(); }
+
+    IothreadLockGuard(const IothreadLockGuard&) = delete;
+    IothreadLockGuard& operator=(const IothreadLockGuard&) = delete;
+
+    IothreadLockGuard(IothreadLockGuard&& other) noexcept
+        : m_qemu(other.m_qemu), m_acquired_lock(std::exchange(other.m_acquired_lock, false))
+    {
+    }
+
+    IothreadLockGuard& operator=(IothreadLockGuard&&) = delete;
+
+    // Helpers for QemuInstance
+    explicit IothreadLockGuard(::QemuInstance& inst);
+    static IothreadLockGuard acquire_if_unlocked(::QemuInstance& inst);
+    IothreadLockGuard(::QemuInstance& qemu, std::adopt_lock_t);
+
+private:
+    LibQemu& m_qemu;
+    bool m_acquired_lock;
 };
 
 class Object
