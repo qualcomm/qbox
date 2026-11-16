@@ -795,12 +795,54 @@ class PCIeDevice : public Device
 public:
     static constexpr const char* const type = "pci-device";
 
+    struct Callbacks {
+        std::function<void(bool)> on_bme_changed;
+        std::function<void(bool)> on_vf_enable_changed;
+        std::function<void(const LibQemuPCIeMsiConfig&)> on_msi_config_changed;
+        std::function<void()> on_flr;
+        std::function<void()> on_reset;
+
+        bool empty() const
+        {
+            return !on_bme_changed
+                && !on_vf_enable_changed
+                && !on_msi_config_changed
+                && !on_flr
+                && !on_reset;
+        }
+    };
+
+    class CallbackOwner {
+        struct State;
+        std::unique_ptr<State> m_state;
+        friend class PCIeDevice;
+
+        CallbackOwner(std::unique_ptr<State> state);
+    
+    public:
+        CallbackOwner();
+        ~CallbackOwner();
+        CallbackOwner(CallbackOwner&&) noexcept;
+        CallbackOwner& operator=(CallbackOwner&&) noexcept;
+
+        bool valid() const noexcept
+        {
+            return bool(m_state);
+        }
+
+        void reset();
+    };
+
     PCIeDevice() = default;
     PCIeDevice(const PCIeDevice&) = default;
     PCIeDevice(const Object& obj): Device(obj) {}
 
+    QemuPCIDevice* pdev() const noexcept;
+
     bool msi_notify(unsigned vector);
     bool msix_notify(unsigned vector);
+    PCIeDevice::CallbackOwner set_callbacks(Callbacks cbs);
+    bool get_cb_data(LibQemuPCIeCbData& cb_data);
 };
 
 }; /* namespace qemu */

@@ -12,7 +12,6 @@
 #include <functional>
 #include <limits>
 #include <cassert>
-#include <cinttypes>
 
 #include <tlm>
 
@@ -28,6 +27,7 @@
 #include <tlm-extensions/shmem_extension.h>
 #include <tlm-extensions/underlying-dmi.h>
 #include <tlm_sockets_buswidth.h>
+#include <ports/bindable.h>
 
 class QemuInitiatorIface
 {
@@ -54,7 +54,8 @@ public:
 template <unsigned int BUSWIDTH = DEFAULT_TLM_BUSWIDTH>
 class QemuInitiatorSocket
     : public tlm::tlm_initiator_socket<BUSWIDTH, tlm::tlm_base_protocol_types, 1, sc_core::SC_ZERO_OR_MORE_BOUND>,
-      public tlm::tlm_bw_transport_if<>
+      public tlm::tlm_bw_transport_if<>,
+      public gs::bindable<QemuInitiatorSocket<BUSWIDTH>, tlm::tlm_base_target_socket_b<BUSWIDTH>>
 {
 private:
     std::mutex m_mutex;

@@ -44,6 +44,8 @@
 #include <async_event.h>
 #include <memory>
 
+#include "bindable.h"
+
 namespace gs {
 
 /*
@@ -52,7 +54,7 @@ namespace gs {
  * To control the binding process, before the get_... interfaces are called, and sockets bound, new_bind must be called,
  * and on completion bind_done must be called.
  */
-struct biflow_bindable {
+struct biflow_bindable : bindable<biflow_bindable, biflow_bindable> {
     virtual void bind(biflow_bindable& other) = 0;
 
     virtual void new_bind(biflow_bindable& other) = 0;

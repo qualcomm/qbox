@@ -5,15 +5,22 @@
 
 #include <cci_configuration>
 #include "libqemu-cxx/libqemu-cxx.h"
+#include "ports/initiator-signal-socket.h"
+#include "ports/bindable.h"
+#include "sysc/communication/sc_port.h"
+#include "sysc/kernel/sc_stage_callback_if.h"
 #include "tlm_core/tlm_2/tlm_generic_payload/tlm_gp.h"
 #include "tlm_utils/multi_passthrough_target_socket.h"
 #include <qemu_gpex.h>
+#include "pcie_msi_config.h"
 
-class qemu_pcie : public qemu_gpex::Device
+class qemu_pcie : public qemu_gpex::Device, private sc_core::sc_stage_callback_if
 {
-    static constexpr const char* DEVICE_NAME = "libqemu-pci";
+    static constexpr const char* DEVICE_NAME = "libqemu-pcie";
     static constexpr unsigned BARS_NB = 6;
     static constexpr const uint8_t PCI_TYPE_ENDPOINT = 0x0;
+
+    using MsiPort = gs::bindable_port<gs::PCIeMsiConfigIf>;
 
     struct BarBase {
         const std::string cci_prefix;
@@ -38,8 +45,8 @@ class qemu_pcie : public qemu_gpex::Device
         BarBase(size_t idx, std::string_view cci_kind, std::string_view qemu_kind, qemu_gpex& gpex, QemuInstance& inst)
             : cci_prefix(std::string(cci_kind) + std::to_string(idx))
             , qemu_prefix(std::string(qemu_kind) + std::to_string(idx))
-            , p_initiator_socket(cci_name("initiator_socket"), gpex, inst)
             , p_size(cci_name("size"), 0, "BAR size, in bytes")
+            , p_initiator_socket(cci_name("initiator_socket"), gpex, inst)
             , p_target_offset(cci_name("target_offset"), 0, "Offset in the backing memory region")
         {}
 
@@ -60,8 +67,8 @@ class qemu_pcie : public qemu_gpex::Device
 
         Bar(size_t idx, qemu_gpex& gpex, QemuInstance& inst)
             : BarBase(idx, "bar", "bar", gpex, inst)
-            , p_is_64b(cci_name("is_64bits"), false, "64 bits BAR pair")
             , p_is_prefetchable(cci_name("prefetchable"), false, "Prefetchable BAR")
+            , p_is_64b(cci_name("is_64bits"), false, "64 bits BAR pair")
         {}
 
         void configure(qemu::Device& dev)
@@ -137,6 +144,12 @@ public:
     // sockets
     tlm_utils::multi_passthrough_target_socket_optional<qemu_pcie> msi_target_socket;
     tlm_utils::multi_passthrough_target_socket_optional<qemu_pcie> msix_target_socket;
+    MsiPort msi_config_port;
+
+    sc_core::sc_port<sc_core::sc_signal_inout_if<bool>, 0, sc_core::SC_ZERO_OR_MORE_BOUND> pf_bme;
+    InitiatorSignalSocket<bool> pf_flr;
+    InitiatorSignalSocket<bool> pf_vf_enable;
+    InitiatorSignalSocket<bool> config_event;
 
     qemu_pcie(const sc_core::sc_module_name& name, sc_core::sc_object* o, sc_core::sc_object* t)
         : qemu_pcie(name, *(dynamic_cast<QemuInstance*>(o)), (dynamic_cast<qemu_gpex*>(t)))
@@ -144,7 +157,7 @@ public:
     }
 
     qemu_pcie(const sc_core::sc_module_name& name, QemuInstance& inst, qemu_gpex* gpex)
-        : qemu_gpex::Device(name, inst, "libqemu-pcie")
+        : qemu_gpex::Device(name, inst, DEVICE_NAME)
         , p_devfn("devfn", 0xff, "PCI devfn")
         , p_vendor_id("vendor_id", 0xffff, "Vendor ID")
         , p_device_id("device_id", 0xffff, "Device ID")
@@ -177,6 +190,11 @@ public:
         , p_pasid_priv("pasid_priv", false, "PASID privileged mod support")
         , msi_target_socket("msi_target_socket")
         , msix_target_socket("msix_target_socket")
+        , msi_config_port("msi_config")
+        , pf_bme("pf_bme")
+        , pf_flr("pf_flr")
+        , pf_vf_enable("pf_vf_enable")
+        , config_event("config_event")
     {
         for (size_t bar = 0; bar < BARS_NB; ++bar) {
             m_bars[bar] = std::make_unique<Bar>(bar, *gpex, inst);
@@ -186,6 +204,7 @@ public:
         msi_target_socket.register_b_transport(this, &qemu_pcie::msi_b_transport);
         msix_target_socket.register_b_transport(this, &qemu_pcie::msix_b_transport);
 
+        sc_core::sc_register_stage_callback(*this, sc_core::SC_POST_START_OF_SIMULATION);
         gpex->add_device(*this);
     }
 
@@ -201,10 +220,9 @@ public:
     {
         qemu_gpex::Device::before_end_of_elaboration();
 
-        auto addr = devfn_to_addr(p_devfn.get_value());
-
         // PCI
-        m_dev.set_prop_str("addr", addr);
+        if (auto devfn = p_devfn.get_value(); devfn != 0xff)
+            m_dev.set_prop_str("addr", devfn_to_addr(devfn));
         m_dev.set_prop_uint("vendor-id", p_vendor_id.get_value());
         m_dev.set_prop_uint("device-id", p_device_id.get_value());
         m_dev.set_prop_uint("subsystem-vendor-id", p_subsystem_vendor_id.get_value());
@@ -262,10 +280,137 @@ public:
         }
     }
 
+protected: 
+    void gpex_realize(qemu::Bus& pcie_bus) override
+    {
+        qemu_gpex::Device::gpex_realize(pcie_bus);
+        qemu::PCIeDevice::Callbacks cbs;
+
+        if (pf_bme.size() || config_event.get_interface()) {
+            cbs.on_bme_changed = [this](bool enabled) { on_bme_changed(enabled); };
+        }
+
+        if (pf_vf_enable.get_interface() || config_event.get_interface()) {
+            cbs.on_vf_enable_changed = [this](bool enabled) { on_vf_enable_changed(enabled); };
+        }
+
+        if (msi_config_port.size()) {
+            cbs.on_msi_config_changed = [this](const LibQemuPCIeMsiConfig& config) {
+                on_msi_config_changed({config.enabled, config.addr, config.data});
+            };
+        }
+
+        cbs.on_flr = [this] { on_reset(true); };
+
+        if (pf_bme.size() || pf_vf_enable.get_interface() || msi_config_port.size()) {
+            cbs.on_reset = [this] { on_reset(false); };
+        }
+
+        m_cbs = qemu::PCIeDevice(m_dev).set_callbacks(std::move(cbs));
+        if (!m_cbs.valid()) {
+            SCP_FATAL(())("callbacks config failed");
+        }
+    }
+
 private:
     std::array<std::unique_ptr<Bar>, BARS_NB> m_bars;
     std::array<std::unique_ptr<VfBar>, BARS_NB> m_vf_bars;
+    gs::runonsysc m_on_sysc;
+    gs::PCIeMsiConfig m_last_msi_config {};
+    bool m_qemu_init_done = false;
+    qemu::PCIeDevice::CallbackOwner m_cbs;
 
+    void stage_callback(const sc_core::sc_stage&) override
+    {
+        m_qemu_init_done = true;
+    }
+
+    void clear_pcie_cbs()
+    {
+        m_qemu_init_done = false;
+        m_cbs.reset();
+    }
+
+    void on_qemu_event(std::function<void()> evt)
+    {
+        m_inst.get().unlock_iothread();
+        m_on_sysc.run_on_sysc(std::move(evt));
+        m_inst.get().lock_iothread();
+    }
+
+    template <typename Socket>
+    static void write_signal(Socket& socket, bool value)
+    {
+        for (int i = 0; i < socket.size(); ++i) {
+            socket[i]->write(value);
+        }
+    }
+
+    template <typename Socket>
+    static void pulse_signal(Socket& socket)
+    {
+        for (int i = 0; i < socket.size(); ++i) {
+            socket[i]->write(true);
+            socket[i]->write(false);
+        }
+    }
+
+    void commit_msi_config(const gs::PCIeMsiConfig& msi_config)
+    {
+        if (!msi_config_port.size() || msi_config == m_last_msi_config) {
+            return;
+        }
+
+        m_last_msi_config = msi_config;
+
+        msi_config_port->update_msi_config(msi_config);
+    }
+
+    void on_bme_changed(bool enabled)
+    {
+        on_qemu_event([this, enabled] {
+            write_signal(pf_bme, enabled);
+            pulse_signal(config_event);
+        });
+    }
+
+    void on_vf_enable_changed(bool enabled)
+    {
+        on_qemu_event([this, enabled] {
+            write_signal(pf_vf_enable, enabled);
+            pulse_signal(config_event);
+        });
+    }
+
+    void on_msi_config_changed(gs::PCIeMsiConfig msi_config)
+    {
+        on_qemu_event([this, msi_config] {
+            commit_msi_config(msi_config);
+        });
+    }
+
+    void on_reset(bool flr)
+    {
+        if (!m_qemu_init_done) {
+            return;
+        }
+
+        LibQemuPCIeCbData cb_data{};
+
+        if (!qemu::PCIeDevice(m_dev).get_cb_data(cb_data)) {
+            SCP_FATAL(())("Cannot get PCIe CB data");
+        }
+
+        on_qemu_event([this, cb_data, flr] {
+            write_signal(pf_bme, cb_data.bme);
+            write_signal(pf_vf_enable, cb_data.vf_enabled);
+            commit_msi_config({ cb_data.msi_config.enabled, cb_data.msi_config.addr, cb_data.msi_config.data });
+            if (flr) {
+                pulse_signal(pf_flr);
+                pulse_signal(config_event);
+            }
+        });
+    }
 
     static bool decode_vector(tlm::tlm_generic_payload& txn, uint32_t& vec)
     {
