@@ -75,7 +75,7 @@ An entry must be accompanied by a completed [DVCon copyright form](https://dvcon
 
 </details>
 
-For the full visual design, open the [HTML companion](COMPETITION_SPLASH.html) from a local copy or through GitHub Pages. GitHub's repository file view displays HTML source rather than rendering the page.
+For the full visual design, open the [HTML companion](https://qualcomm.github.io/qbox/competition/) from a local copy or through GitHub Pages. GitHub's repository file view displays HTML source rather than rendering the page.
 
 ---
 
