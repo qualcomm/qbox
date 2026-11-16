@@ -418,7 +418,9 @@ private:
         if (txn.get_command() != tlm::TLM_WRITE_COMMAND
          || txn.get_address() != 0
          || txn.get_data_length() != sizeof(vec)
-         || txn.get_data_ptr() == nullptr) {
+         || txn.get_data_ptr() == nullptr
+         || txn.get_byte_enable_ptr() != nullptr
+         || txn.get_streaming_width() < sizeof(vec)) {
             return false;
         }
 
