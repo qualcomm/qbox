@@ -14,13 +14,22 @@
 
 class qemu_kbd : public qemu_xhci::Device
 {
+    cci::cci_param<std::string> p_display;
+
 public:
     qemu_kbd(const sc_core::sc_module_name& name, sc_core::sc_object* o, sc_core::sc_object* t)
         : qemu_kbd(name, *(dynamic_cast<QemuInstance*>(o)), (dynamic_cast<qemu_xhci*>(t)))
     {
     }
-    qemu_kbd(const sc_core::sc_module_name& n, QemuInstance& inst, qemu_xhci* xhci): qemu_xhci::Device(n, inst, "usb-kbd")
+    qemu_kbd(const sc_core::sc_module_name& n, QemuInstance& inst, qemu_xhci* xhci)
+        : qemu_xhci::Device(n, inst, "usb-kbd")
+        , p_display("display", "", "QEMU display device receiving keyboard input")
     {
+        set_dev_props = [this]() {
+            if (!p_display.get_value().empty()) {
+                m_dev.set_prop_str("display", p_display.get_value().c_str());
+            }
+        };
         xhci->add_device(*this);
     }
 };
