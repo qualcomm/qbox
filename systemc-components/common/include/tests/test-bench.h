@@ -105,7 +105,7 @@ public:
 template <class T>
 static inline void run_test_bench(T* instance)
 {
-    sc_spawn(sc_bind(&T::test_bench_body, instance));
+    sc_core::sc_spawn(sc_core::sc_bind(&T::test_bench_body, instance));
     sc_core::sc_start();
 }
 
