@@ -912,13 +912,13 @@ public:
         return *this;
     }
 
-#define GS_BANK_ELEM_RMW(op, name)                     \
-    gs_register_bank_element& operator op##=(ELEM rhs) \
-    {                                                  \
-        require_full(name);                            \
-        ELEM v = static_cast<ELEM>(*this) op rhs;      \
-        m_bank.set_bytes(&v, m_byte_off);              \
-        return *this;                                  \
+#define GS_BANK_ELEM_RMW(op, name)                       \
+    gs_register_bank_element& operator op## = (ELEM rhs) \
+    {                                                    \
+        require_full(name);                              \
+        ELEM v = static_cast<ELEM>(*this) op rhs;        \
+        m_bank.set_bytes(&v, m_byte_off);                \
+        return *this;                                    \
     }
     GS_BANK_ELEM_RMW(+, "+=")
     GS_BANK_ELEM_RMW(-, "-=")

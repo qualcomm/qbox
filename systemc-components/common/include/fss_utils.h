@@ -11,6 +11,7 @@
 #include <tlm>
 #include <cstddef>
 #include <new>
+#include <string>
 #include <cassert>
 #include <type_traits>
 #include <utility>
@@ -27,7 +28,7 @@ namespace gs {
  * pointer to the parent instance of type PARENT_TYPE contaning the member pointer.
  */
 template <class PARENT_TYPE, class MEMBER_TYPE>
-PARENT_TYPE* container_of(const MEMBER_TYPE* member, const MEMBER_TYPE PARENT_TYPE::*member_ptr)
+PARENT_TYPE* container_of(const MEMBER_TYPE* member, const MEMBER_TYPE PARENT_TYPE::* member_ptr)
 {
     const PARENT_TYPE* const parent = 0;
     auto member_offset = reinterpret_cast<ptrdiff_t>(reinterpret_cast<const uint8_t*>(&(parent->*member_ptr)) -
@@ -115,7 +116,7 @@ public:
 
     IF* get_if_handle() const override { return m_if_handle; }
 
-    fssString get_if_name() const override { return m_if_name; }
+    fssString get_if_name() const override { return m_if_name.c_str(); }
 
     virtual ~fss_binder_base() {}
 
@@ -128,7 +129,6 @@ protected:
         if (!if_handle) {
             die_null_ptr("bind_if", "if_handle");
         }
-        other_if_name = if_name;
         other_if_handle = if_handle;
         if (m_bind_handle) {
             BIND_IF_FN_PTR<IF> bind_if_if;
@@ -149,11 +149,10 @@ protected:
     }
 
 protected:
-    fssString m_if_name;
+    std::string m_if_name;
     fssBindIFHandle m_bind_handle;
     IF* m_if_handle;
     IF* other_if_handle;
-    fssString other_if_name;
 };
 
 class fss_events_binder : public fss_binder_base<fssEventsIf>

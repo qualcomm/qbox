@@ -60,9 +60,9 @@ TEST_BENCH(TestFILE, FileReadWrite)
 {
     m_initiator.do_write(14 << 2, 0x10); // #define PL011_INT_RX 0x10 - s->int_enabled
     m_initiator.do_write(11 << 2, 0x10); // pl011_set_read_trigger();
-    char data = 0;
+    unsigned char data = 0;
     // read test
-    while (data != EOF) {
+    while (data != static_cast<unsigned char>(EOF)) {
         wait(ev);
         ASSERT_EQ(m_initiator.do_read(0x00, data), tlm::TLM_OK_RESPONSE);
         std::cout << "the recived character is: " << data << std::endl;

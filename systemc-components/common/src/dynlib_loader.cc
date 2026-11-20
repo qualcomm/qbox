@@ -16,6 +16,8 @@
 #include <map>
 #include <atomic>
 #include <filesystem>
+#include <optional>
+#include <vector>
 
 #include <dynlib_loader.h>
 #include <scp/report.h>
@@ -55,6 +57,91 @@ void global_set_cci_param(char* key, uint64_t val)
 #endif
 
 namespace fs = std::filesystem;
+
+// to get an address in this library
+static int library_obj;
+
+static std::optional<fs::path> get_library_dir()
+{
+    fs::path module_path;
+
+#if defined(_WIN32)
+    HMODULE module = nullptr;
+    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCSTR>(&library_obj), &module)) {
+        return std::nullopt;
+    }
+    std::vector<wchar_t> buf(256);
+    for (;;) {
+        const DWORD len = GetModuleFileNameW(module, buf.data(), static_cast<DWORD>(buf.size()));
+
+        if (!len) {
+            return std::nullopt;
+        }
+
+        if (len < buf.size()) {
+            module_path = fs::path(std::wstring(buf.data(), len));
+            break;
+        }
+
+        buf.resize(buf.size() * 2);
+    }
+#else
+    Dl_info info{};
+    if (!dladdr(&library_obj, &info) || !info.dli_fname || !info.dli_fname[0]) {
+        return std::nullopt;
+    };
+
+    module_path = info.dli_fname;
+#endif
+
+    std::error_code err;
+    auto absolute_path = fs::absolute(module_path, err);
+    if (err) {
+        return std::nullopt;
+    }
+
+    return absolute_path.parent_path();
+}
+
+fs::path qemu::resolve_library_path(const std::string& name)
+{
+    const auto lib_path = fs::u8path(name);
+
+    if (lib_path.has_parent_path()) {
+        // it's already resolved, return
+        return fs::absolute(lib_path);
+    }
+
+    std::vector<fs::path> dirs;
+
+    if (const auto dir = get_library_dir()) {
+        dirs.push_back(*dir);
+    }
+
+#ifdef LIBQEMU_LIBRARY_DIR
+    const auto build_dir = fs::u8path(LIBQEMU_LIBRARY_DIR);
+    if (build_dir.is_absolute()) {
+        dirs.push_back(build_dir);
+    }
+#endif
+
+    for (const auto& dir : dirs) {
+        const auto possible_path = dir / lib_path;
+        std::error_code err;
+
+        if (fs::is_regular_file(possible_path, err)) {
+            return possible_path;
+        }
+
+        if (err && err != std::errc::no_such_file_or_directory && err != std::errc::not_a_directory) {
+            throw fs::filesystem_error("error while finding shared library", possible_path, err);
+        }
+    }
+
+    // could not find anything, fall back to loader's search
+    return lib_path;
+}
 
 #if defined(_WIN32)
 /**
@@ -108,8 +195,8 @@ static bool spawn_cleanup_process(const fs::path& dll_path)
 
     // Build the command line: dll_cleanup_helper.exe <handle> <dll_path>
     std::ostringstream cmd;
-    cmd << "\"" << helper_path.string() << "\" " << reinterpret_cast<uintptr_t>(inheritable_handle) << " "
-        << "\"" << dll_path.string() << "\"";
+    cmd << "\"" << helper_path.string() << "\" " << reinterpret_cast<uintptr_t>(inheritable_handle) << " " << "\""
+        << dll_path.string() << "\"";
 
     std::string cmd_str = cmd.str();
 
@@ -219,15 +306,29 @@ private:
 
     void* load_library_internal(const std::string& lib_name)
     {
+        const auto path = fs::u8path(lib_name);
         void* handle = nullptr;
+
 #if defined(_WIN32)
-        handle = LoadLibraryExA(lib_name.c_str(), NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+        const DWORD flags = path.is_absolute() ? LOAD_WITH_ALTERED_SEARCH_PATH : 0;
+
+        handle = reinterpret_cast<void*>(LoadLibraryExW(path.c_str(), nullptr, flags));
+
+        if (!handle) {
+            const DWORD err = GetLastError();
+            m_last_error = "load_library_internal: Library " + lib_name + " is not loaded (" + std::to_string(err) +
+                           ").";
+        }
 #else
-        handle = dlopen(lib_name.c_str(), RTLD_NOW);
-        if (handle == nullptr) {
-            m_last_error = "load_library_internal: Library " + lib_name + " is not loaded (" + dlerror() + ").";
+        handle = dlopen(path.c_str(), RTLD_NOW);
+
+        if (!handle) {
+            const char* dlerr = dlerror();
+            const char* err = dlerr ? dlerr : "unknown error";
+            m_last_error = "load_library_internal: Library " + lib_name + " is not loaded (" + err + ").";
         }
 #endif
+
         return handle;
     }
 
@@ -302,7 +403,7 @@ private:
             return nullptr;
         }
 
-        void* handle = load_library_internal(temp_path.string());
+        void* handle = load_library_internal(temp_path.u8string());
         if (handle == nullptr) {
             m_last_error = get_last_error();
             fs::remove(temp_path);
@@ -350,15 +451,17 @@ private:
 public:
     qemu::LibraryLoaderIface::LibraryIfacePtr load_library(const std::string& lib_name, bool load_as_separate_instance)
     {
+        const std::string path = qemu::resolve_library_path(lib_name).u8string();
+
         // If a separate instance of the shared library is requested and the library has been already loaded
         // the library must be copied into a new location and loaded from there.
-        if (load_as_separate_instance && is_library_loaded(lib_name)) {
-            std::cout << "Loading separate instance of library: " << lib_name << std::endl;
-            return duplicate_and_load_library(lib_name);
+        if (load_as_separate_instance && is_library_loaded(path)) {
+            std::cout << "Loading separate instance of library: " << path << std::endl;
+            return duplicate_and_load_library(path);
         }
 
         // Load the library
-        void* handle = load_library_internal(lib_name);
+        void* handle = load_library_internal(path);
         if (handle == nullptr) {
             m_last_error = get_last_error();
             return nullptr;

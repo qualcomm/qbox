@@ -6,6 +6,8 @@
 
 set -euo pipefail
 
+LLVM_SUFFIX="${LLVM_VERSION:+-$LLVM_VERSION}"
+
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 EXTENSIONS=(
@@ -22,4 +24,4 @@ cd "$SCRIPT_DIR/.."
     git diff -z --cached --diff-filter=A --name-only -- "${EXTENSIONS[@]}"  # files staged and added
 ) |
     sort -zu |
-    xargs -0 -r clang-format -i -style=file
+    xargs -0 -r clang-format"$LLVM_SUFFIX" -i -style=file
