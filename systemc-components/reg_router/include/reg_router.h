@@ -40,6 +40,12 @@ class reg_router : public sc_core::sc_module, public gs::router_if<BUSWIDTH>
         reg_router<BUSWIDTH>>;
     using gs::router_if<BUSWIDTH>::bound_targets;
 
+    struct address_guard {
+        tlm::tlm_generic_payload& txn;
+        sc_dt::uint64 address;
+        ~address_guard() { txn.set_address(address); }
+    };
+
     void register_boundto(std::string s) override
     {
         s = gs::router_if<BUSWIDTH>::nameFromSocket(s);
@@ -59,6 +65,7 @@ public:
     void b_transport(int id, tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
     {
         sc_dt::uint64 addr = trans.get_address();
+        address_guard{ trans, addr };
 
         std::shared_ptr<target_info> ti = decode_address(trans); // Use shared_ptr
 
@@ -97,6 +104,8 @@ public:
     unsigned int transport_dbg(int id, tlm::tlm_generic_payload& trans)
     {
         sc_dt::uint64 addr = trans.get_address();
+        address_guard guard{ trans, addr };
+
         // transport_dbg transactions should only be handled by register memory
         std::shared_ptr<target_info> ti = decode_address(trans); // Use shared_ptr
 
