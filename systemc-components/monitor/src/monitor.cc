@@ -29,6 +29,9 @@ platform["monitor_0"] = {
 #undef WIN32_LEAN_AND_MEAN
 #endif
 #include "monitor.h"
+#ifdef QBOX_MONITOR_HAS_MCIPS
+#include <mcips-plugin.h>
+#endif
 #include <module_factory_registery.h>
 #include <router_if.h>
 #include <vector>
@@ -332,12 +335,14 @@ void monitor<BUSWIDTH>::init_monitor()
     ([&]() {
         std::ostringstream os;
         os << "[";
+#ifdef QBOX_MONITOR_HAS_MCIPS
         bool firstPlugin = true;
         for (auto* p : m_mcips_plugins) {
             if (!firstPlugin) os << ",";
             firstPlugin = false;
             os << p->get_mcips_status_json(); // returns a JSON string per plugin
         }
+#endif
         os << "]";
         crow::response res(os.str());
         res.add_header("Content-Type", "application/json");
@@ -440,7 +445,9 @@ template <unsigned int BUSWIDTH>
 void monitor<BUSWIDTH>::end_of_elaboration()
 {
     m_qks = find_sc_objects<gs::tlm_quantumkeeper_multithread>();
+#ifdef QBOX_MONITOR_HAS_MCIPS
     m_mcips_plugins = find_sc_objects<McipsPlugin>();
+#endif
 }
 
 template <unsigned int BUSWIDTH>
