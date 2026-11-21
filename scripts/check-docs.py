@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#
+# Copyright (c) Qualcomm Innovation Center, Inc. All Rights Reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
 """Check supported local Markdown links without changing or running anything."""
 
 from __future__ import annotations
