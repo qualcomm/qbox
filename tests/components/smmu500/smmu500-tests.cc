@@ -1236,6 +1236,7 @@ TEST_BENCH(smmu500_pamax32_test_bench, OutputAddressSizeFaultRejectsPage)
 TEST_BENCH(smmu500_test_bench, ExternalPageTableFetchFaultSetsContextFault)
 {
     configure_identity_context();
+    smmu.SMMU_CBA2R[0][smmu.CBA2R_VA64] = 1;
     smmu.SMMU_CB_SCTLR[0][smmu.CB_SCTLR_M] = 1;
     smmu.SMMU_CB_TCR_LPAE[0] = 25;
     smmu.SMMU_CB_TTBR0_LOW[0] = 0x400000;
@@ -1247,6 +1248,7 @@ TEST_BENCH(smmu500_test_bench, ExternalPageTableFetchFaultSetsContextFault)
 TEST_BENCH(smmu500_test_bench, ExternalFaultRecordsPageWalkSyndrome)
 {
     configure_identity_context();
+    smmu.SMMU_CBA2R[0][smmu.CBA2R_VA64] = 1;
     smmu.SMMU_CB_SCTLR[0][smmu.CB_SCTLR_M] = 1;
     smmu.SMMU_CB_TCR_LPAE[0] = 25;
     smmu.SMMU_CB_TTBR0_LOW[0] = 0x400000;
