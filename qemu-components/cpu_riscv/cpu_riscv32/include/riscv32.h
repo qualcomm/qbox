@@ -53,6 +53,7 @@ public:
     cci::cci_param<bool> p_smrnmi;
     cci::cci_param<bool> p_smaia;
     cci::cci_param<bool> p_ssaia;
+    cci::cci_param<std::string> p_clic;
     QemuCpuRiscv32(const sc_core::sc_module_name& name, QemuInstance& inst, const char* model, uint64_t hartid)
         : QemuCpu(name, inst, std::string(model) + "-riscv")
         , m_hartid(hartid)
@@ -79,6 +80,7 @@ public:
         , p_smrnmi("smrnmi", false, "Enable Smrnmi (RNMI M-mode CSRs 0x740-0x744)")
         , p_smaia("smaia", false, "Enable Smaia (AIA M-mode CSRs)")
         , p_ssaia("ssaia", false, "Enable Ssaia (AIA S-mode CSRs)")
+        , p_clic("clic", "", "CLIC sibling instance")
     {
         m_external_ev |= m_irq_ev;
         for (auto& irq : irq_in) {
@@ -91,6 +93,13 @@ public:
         QemuCpu::before_end_of_elaboration();
 
         qemu::CpuRiscv32 cpu(get_qemu_dev());
+        if (!p_clic.get_value().empty()) {
+            auto* clic = dynamic_cast<QemuDevice*>(
+                gs::find_sc_obj(nullptr, std::string(get_parent_object()->name()) + "." + p_clic.get_value()));
+            sc_assert(clic && &clic->get_qemu_inst() == &get_qemu_inst());
+            clic->before_end_of_elaboration();
+            cpu.set_prop_link("clic", clic->get_qemu_dev());
+        }
         cpu.set_prop_int("hartid", p_hartid);
 
         // Set properties from CCI parameters
