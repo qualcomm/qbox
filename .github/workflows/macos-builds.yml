@@ -16,12 +16,17 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: scripts/install_dependencies.sh
+        run: |
+          export QBOX_PYTHON_VENV="$RUNNER_TEMP/qbox-python"
+          echo "QBOX_PYTHON_VENV=$QBOX_PYTHON_VENV" >> "$GITHUB_ENV"
+          scripts/install_dependencies.sh
+          "$QBOX_PYTHON_VENV/bin/python" -c 'import sys, pexpect, numpy; print(sys.executable)'
 
       - name: Configure
         run: >
           cmake --preset "${{ matrix.preset }}"
           -DLIBQEMU_TARGETS="aarch64;hexagon"
+          -DPython3_EXECUTABLE="$QBOX_PYTHON_VENV/bin/python"
 
       - name: Build
         run: cmake --build --preset "${{ matrix.preset }}" --parallel $(sysctl -n hw.logicalcpu)

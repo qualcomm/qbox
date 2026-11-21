@@ -57,18 +57,19 @@ else
             if [ "${MAJOR_VERSION}" = "27" ]; then
                 brew install asio bison cmake dtc jpeg-turbo libelf libslirp libzip \
                     lld llvm meson ninja python3 sdl2 pixman
-                pip install --user pexpect numpy
             elif [ "${MAJOR_VERSION}" = "26" ]; then
                 brew install asio bison cmake dtc jpeg-turbo libelf libslirp libzip \
                     lld llvm meson ninja python3 sdl2
-                pip install --user pexpect numpy
             elif [ "${MAJOR_VERSION}" = "15" ]; then
                 brew install asio bison cmake dtc jpeg-turbo libelf libslirp libzip \
                     lld llvm meson ninja python3 sdl2
-                pip install --user pexpect numpy
             else
                 unsupported_operating_system
             fi
+
+            QBOX_PYTHON_VENV=${QBOX_PYTHON_VENV:-"${PWD}/build/python-venv"}
+            python3 -m venv "${QBOX_PYTHON_VENV}" || exit 1
+            "${QBOX_PYTHON_VENV}/bin/python" -m pip install pexpect numpy || exit 1
 
             brew tap quic/quic https://github.com/quic/homebrew-quic.git
             brew trust quic/quic
