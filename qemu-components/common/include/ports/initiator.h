@@ -349,6 +349,11 @@ public:
     {
     }
 
+    QemuInitiatorSocket(std::string_view name, QemuInitiatorIface& initiator, QemuInstance& inst)
+        : QemuInitiatorSocket(std::string(name).c_str(), initiator, inst)
+    {
+    }
+
     void set_qemu_inst(QemuInstance& inst)
     {
         m_instance_hint = std::make_unique<QemuInstanceHintTlmExtension>(inst);
@@ -373,6 +378,8 @@ public:
         m_r->m_root->init_io(dev, TlmInitiatorSocket::name(), std::numeric_limits<uint64_t>::max(), ops);
         dev.set_prop_link(prop, *m_r->m_root);
     }
+
+    void init(qemu::Device& dev, std::string_view prop) { return init(dev, std::string(prop).c_str()); }
 
     void init(qemu::IOMMUMemoryRegion& region)
     {
