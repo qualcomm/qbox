@@ -270,7 +270,24 @@ public:
     void set_prop_link(const char* name, const Object& link);
     void set_prop_parse(const char* name, const char* value);
 
+    void set_prop_bool(std::string_view name, bool val) { return set_prop_bool(std::string(name).c_str(), val); }
+    void set_prop_int(std::string_view name, int64_t val) { return set_prop_int(std::string(name).c_str(), val); }
+    void set_prop_uint(std::string_view name, uint64_t val) { return set_prop_uint(std::string(name).c_str(), val); }
+    void set_prop_str(std::string_view name, std::string_view val)
+    {
+        return set_prop_str(std::string(name).c_str(), std::string(val).c_str());
+    }
+    void set_prop_link(std::string_view name, const Object& link)
+    {
+        return set_prop_link(std::string(name).c_str(), link);
+    }
+    void set_prop_parse(std::string_view name, std::string_view value)
+    {
+        return set_prop_parse(std::string(name).c_str(), std::string(value).c_str());
+    }
+
     Object get_prop_link(const char* name);
+    Object get_prop_link(std::string_view name) { return get_prop_link(std::string(name).c_str()); }
 
     QemuObject* get_qemu_obj() const { return m_obj; }
 
