@@ -1,6 +1,6 @@
-gs_create_dymod(qemu_rciep_pci)
+gs_create_dymod(qemu_pcie)
 
 target_include_directories(
-    qemu_rciep_pci PUBLIC
+    qemu_pcie PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/qemu-components/pci/qemu_gpex/include>
   )

@@ -6,6 +6,6 @@
 
 #include <systemc>
 
-#include <qemu_rciep_pci.h>
+#include <qemu_pcie.h>
 
-void module_register() { GSC_MODULE_REGISTER_C(qemu_rciep_pci, sc_core::sc_object*, sc_core::sc_object*); }
+void module_register() { GSC_MODULE_REGISTER_C(qemu_pcie, sc_core::sc_object*, sc_core::sc_object*); }
