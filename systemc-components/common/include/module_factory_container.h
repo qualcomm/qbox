@@ -8,6 +8,10 @@
 #define GREENSOCS_MODULE_FACTORY_H
 
 #include "cciutils.h"
+#include "sysc/communication/sc_port.h"
+#include "tlm_core/tlm_2/tlm_2_interfaces/tlm_fw_bw_ifs.h"
+#include "tlm_core/tlm_2/tlm_sockets/tlm_initiator_socket.h"
+#include "tlm_core/tlm_2/tlm_sockets/tlm_target_socket.h"
 #include <cci_configuration>
 #include <systemc>
 #include <tlm>
@@ -26,21 +30,13 @@
 
 #include <ports/target-signal-socket.h>
 #include <ports/initiator-signal-socket.h>
-
-#ifndef WITHOUT_QEMU
-#include <ports/target.h>
-#include <ports/initiator.h>
-#include <ports/qemu-target-signal-socket.h>
-#include <ports/qemu-initiator-signal-socket.h>
-#endif
-
 #include <ports/biflow-socket.h>
+#include <ports/bindable.h>
 #include <module_factory_registery.h>
 #include <transaction_forwarder_if.h>
 #include <tlm_sockets_buswidth.h>
 #include <algorithm>
 #include <vector>
-#include <iterator>
 #include <regex>
 #include <cctype>
 
@@ -237,9 +233,6 @@ public:
         auto t = dynamic_cast<T*>(t_obj);
         if (i && t) {
             i->bind(*t);
-            SCP_INFO(())
-            ("Binding initiator socket: {}({}) with the target socket: {}({})", i_obj->name(), typeid(i).name(),
-             t_obj->name(), typeid(t).name());
             return true;
         }
         t = dynamic_cast<T*>(i_obj);
@@ -360,51 +353,33 @@ public:
     template <unsigned int BIND_BUSWIDTH>
     bool try_bind_all(sc_core::sc_object* i_obj, sc_core::sc_object* t_obj)
     {
-        if ((try_bind<tlm_utils::multi_init_base<BIND_BUSWIDTH>, tlm::tlm_base_target_socket<BIND_BUSWIDTH>>(i_obj,
-                                                                                                             t_obj)) ||
-            (try_bind<tlm_utils::multi_init_base<BIND_BUSWIDTH>, tlm_utils::multi_target_base<BIND_BUSWIDTH>>(i_obj,
-                                                                                                              t_obj)) ||
-            (try_bind<tlm::tlm_base_initiator_socket<BIND_BUSWIDTH>, tlm::tlm_base_target_socket<BIND_BUSWIDTH>>(
-                i_obj, t_obj)) ||
-            (try_bind<tlm::tlm_base_initiator_socket<BIND_BUSWIDTH>, tlm_utils::multi_target_base<BIND_BUSWIDTH>>(
+        if (!i_obj || !t_obj) {
+            return false;
+        }
+
+        if (dynamic_cast<gs::bindable_base*>(i_obj) || dynamic_cast<gs::bindable_base*>(t_obj)) {
+            if (!gs::try_bind(*i_obj, *t_obj)) {
+                return false;
+            }
+
+            SCP_INFO(())
+            ("Binding sockets: {}({}) with the socket: {}({})", i_obj->name(), typeid(i_obj).name(), t_obj->name(),
+             typeid(t_obj).name());
+
+            return true;
+        }
+
+        if ((try_bind<tlm::tlm_base_initiator_socket<BIND_BUSWIDTH>, tlm::tlm_base_target_socket_b<BIND_BUSWIDTH>>(
                 i_obj, t_obj)) ||
             (try_bind<tlm::tlm_base_initiator_socket<BIND_BUSWIDTH, tlm::tlm_fw_transport_if<>,
                                                      tlm::tlm_bw_transport_if<>, 1, sc_core::SC_ZERO_OR_MORE_BOUND>,
-                      tlm_utils::multi_target_base<BIND_BUSWIDTH>>(i_obj, t_obj)) ||
-            (try_bind<gs::biflow_bindable, gs::biflow_bindable>(i_obj, t_obj)) ||
+                      tlm::tlm_base_target_socket_b<BIND_BUSWIDTH>>(i_obj, t_obj)) ||
             (try_bind<tlm::tlm_base_initiator_socket<BIND_BUSWIDTH, tlm::tlm_fw_transport_if<>,
-                                                     tlm::tlm_bw_transport_if<>, 1, sc_core::SC_ZERO_OR_MORE_BOUND>,
-                      tlm::tlm_base_target_socket<BIND_BUSWIDTH>>(i_obj, t_obj)) ||
-            (try_bind<
-                tlm::tlm_initiator_socket<BIND_BUSWIDTH, tlm::tlm_base_protocol_types, 1,
-                                          sc_core::SC_ONE_OR_MORE_BOUND>,
-                tlm::tlm_target_socket<BIND_BUSWIDTH, tlm::tlm_base_protocol_types, 1, sc_core::SC_ZERO_OR_MORE_BOUND>>(
-                i_obj, t_obj)) ||
-            (try_bind<
-                tlm_utils::multi_init_base<BIND_BUSWIDTH>,
-                tlm::tlm_target_socket<BIND_BUSWIDTH, tlm::tlm_base_protocol_types, 1, sc_core::SC_ZERO_OR_MORE_BOUND>>(
-                i_obj, t_obj)) ||
-            (try_bind<
-                tlm::tlm_base_initiator_socket<BIND_BUSWIDTH, tlm::tlm_fw_transport_if<>, tlm::tlm_bw_transport_if<>, 1,
-                                               sc_core::SC_ZERO_OR_MORE_BOUND>,
-                tlm::tlm_target_socket<BIND_BUSWIDTH, tlm::tlm_base_protocol_types, 1, sc_core::SC_ZERO_OR_MORE_BOUND>>(
-                i_obj, t_obj)) ||
-            (try_bind<sc_core::sc_port<sc_core::sc_signal_inout_if<bool>, 0, sc_core::SC_ZERO_OR_MORE_BOUND>,
-                      TargetSignalSocket<bool>>(i_obj, t_obj)) ||
-            (try_bind<InitiatorSignalSocket<bool>, TargetSignalSocket<bool>>(i_obj, t_obj)) ||
-            (try_bind<InitiatorSignalSocket<uint32_t>, TargetSignalSocket<uint32_t>>(i_obj, t_obj))
-#ifndef WITHOUT_QEMU
-            ||
-            (try_bind<QemuInitiatorSocket<BIND_BUSWIDTH>, tlm::tlm_base_target_socket<BIND_BUSWIDTH>>(i_obj, t_obj)) ||
-            (try_bind<QemuInitiatorSocket<BIND_BUSWIDTH>, tlm_utils::multi_target_base<BIND_BUSWIDTH>>(i_obj, t_obj)) ||
-            (try_bind<tlm_utils::multi_init_base<BIND_BUSWIDTH>, QemuTargetSocket<BIND_BUSWIDTH>>(i_obj, t_obj)) ||
-            (try_bind<tlm::tlm_base_initiator_socket<BIND_BUSWIDTH>, QemuTargetSocket<BIND_BUSWIDTH>>(i_obj, t_obj)) ||
-            (try_bind<QemuInitiatorSocket<BIND_BUSWIDTH>, QemuTargetSocket<BIND_BUSWIDTH>>(i_obj, t_obj)) ||
-            (try_bind<QemuInitiatorSignalSocket, QemuTargetSignalSocket>(i_obj, t_obj)) ||
-            (try_bind<QemuInitiatorSignalSocket, TargetSignalSocket<bool>>(i_obj, t_obj)) ||
-            (try_bind<InitiatorSignalSocket<bool>, QemuTargetSignalSocket>(i_obj, t_obj))
-#endif
-        ) {
+                                                     tlm::tlm_bw_transport_if<>, 0>,
+                      tlm::tlm_base_target_socket_b<BIND_BUSWIDTH>>(i_obj, t_obj)) ||
+            (try_bind<tlm::tlm_base_initiator_socket<BIND_BUSWIDTH, tlm::tlm_fw_transport_if<>,
+                                                     tlm::tlm_bw_transport_if<>, 0, sc_core::SC_ZERO_OR_MORE_BOUND>,
+                      tlm::tlm_base_target_socket_b<BIND_BUSWIDTH>>(i_obj, t_obj))) {
             return true;
         } else {
             return false;
@@ -1143,25 +1118,25 @@ public:
         SCP_DEBUG(()) << "ContainerBase Constructor";
 
         initiator_sockets.init(p_tlm_initiator_ports_num.get_value(),
-                               [this](const char* n, int i) { return new tlm_initiator_socket_type(n); });
+                               [](const char* n, int i) { return new tlm_initiator_socket_type(n); });
         target_sockets.init(p_tlm_target_ports_num.get_value(),
-                            [this](const char* n, int i) { return new tlm_target_socket_type(n); });
+                            [](const char* n, int i) { return new tlm_target_socket_type(n); });
         initiator_signal_sockets.init(p_initiator_signals_num.get_value(),
-                                      [this](const char* n, int i) { return new InitiatorSignalSocket<bool>(n); });
+                                      [](const char* n, int i) { return new InitiatorSignalSocket<bool>(n); });
         target_signal_sockets.init(p_target_signals_num.get_value(),
-                                   [this](const char* n, int i) { return new TargetSignalSocket<bool>(n); });
+                                   [](const char* n, int i) { return new TargetSignalSocket<bool>(n); });
 
-        for (int i = 0; i < p_tlm_target_ports_num.get_value(); i++) {
+        for (size_t i = 0; i < p_tlm_target_ports_num.get_value(); i++) {
             target_sockets[i].register_b_transport(this, &ContainerBase::b_transport, i);
             target_sockets[i].register_transport_dbg(this, &ContainerBase::transport_dbg, i);
             target_sockets[i].register_get_direct_mem_ptr(this, &ContainerBase::get_direct_mem_ptr, i);
         }
 
-        for (int i = 0; i < p_tlm_initiator_ports_num.get_value(); i++) {
+        for (size_t i = 0; i < p_tlm_initiator_ports_num.get_value(); i++) {
             initiator_sockets[i].register_invalidate_direct_mem_ptr(this, &ContainerBase::invalidate_direct_mem_ptr);
         }
 
-        for (int i = 0; i < p_target_signals_num.get_value(); i++) {
+        for (size_t i = 0; i < p_target_signals_num.get_value(); i++) {
             target_signal_sockets[i].register_value_changed_cb([&, i](bool value) {
                 if (m_local_pass) m_local_pass->fw_handle_signal(i, value);
             });
@@ -1209,7 +1184,7 @@ public:
     {
         SCP_DEBUG(()) << " " << name() << " invalidate_direct_mem_ptr " << " start address 0x" << std::hex << start
                       << " end address 0x" << std::hex << end;
-        for (int i = 0; i < target_sockets.size(); i++) {
+        for (size_t i = 0; i < target_sockets.size(); i++) {
             target_sockets[i]->invalidate_direct_mem_ptr(start, end);
         }
     }
