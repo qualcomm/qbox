@@ -309,6 +309,7 @@ if (NOT WITHOUT_QEMU)
             qemu-components/common/src/libqemu-cxx/cpu.cc
             qemu-components/common/src/libqemu-cxx/device.cc
             qemu-components/common/src/libqemu-cxx/gpex.cc
+            qemu-components/common/src/libqemu-cxx/pcie.cc
             qemu-components/common/src/libqemu-cxx/gpio.cc
             qemu-components/common/src/libqemu-cxx/libqemu-cxx.cc
             qemu-components/common/src/libqemu-cxx/libqemu-plugin.cc
