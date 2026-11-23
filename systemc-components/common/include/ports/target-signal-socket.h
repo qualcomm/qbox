@@ -14,6 +14,8 @@
 #include <async_event.h>
 #include <systemc>
 
+#include "bindable.h"
+
 template <class T>
 class TargetSignalSocket;
 
@@ -159,11 +161,11 @@ public:
 /* TODO: TargetSignalSocketProxy specialization for sc_dt::sc_logic type */
 
 template <class T>
-class TargetSignalSocket : public sc_core::sc_export<sc_core::sc_signal_inout_if<T> >
+class TargetSignalSocket : public gs::bindable_export<sc_core::sc_signal_inout_if<T>>
 {
 public:
     using Iface = typename TargetSignalSocketProxy<T>::Iface;
-    using Parent = sc_core::sc_export<Iface>;
+    using Parent = gs::bindable_export<Iface>;
     using ValueChangedCallback = typename TargetSignalSocketProxy<T>::ValueChangedCallback;
 
 protected:

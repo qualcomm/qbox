@@ -6,6 +6,10 @@
 
 #include "module_factory_container.h"
 
+#ifndef WITHOUT_QEMU
+#include "qemu-instance.h"
+#endif
+
 // Module registrations - moved from header to avoid duplicate registrations
 // when header is included in multiple translation units
 GSC_MODULE_REGISTER(Container);
