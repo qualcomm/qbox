@@ -1,6 +1,7 @@
 /build*/
 /platforms/hello-qbox/build*/
 CMakeUserPresets.json
+compile_commands.json
 /debug*/
 /install*/
 tags
