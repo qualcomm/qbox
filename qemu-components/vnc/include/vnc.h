@@ -39,6 +39,7 @@ class vnc : public sc_core::sc_module
 
 public:
     cci::cci_param<std::string> p_params;
+    cci::cci_param<bool> p_egl_headless;
     cci::cci_param<int> p_gpu_output;
 
 protected:

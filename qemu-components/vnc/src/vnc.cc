@@ -11,6 +11,7 @@
 vnc::vnc(const sc_core::sc_module_name& name, sc_core::sc_object* gpu)
     : sc_module(name)
     , p_params("params", "", "VNC configuration parameters")
+    , p_egl_headless("egl_headless", false, "Use the EGL headless rendering")
     , p_gpu_output("gpu_output", -1, "GPU output index for this VNC connection (required)")
     , m_gpu(dynamic_cast<QemuDevice*>(gpu))
 {
@@ -100,6 +101,10 @@ void vnc::initialize()
     SCP_INFO(())
     ("VNC Configuration on display: {}, device id: {} and user param: {}", p_gpu_output.get_value(), m_gpu_device_id,
      p_params.get_value());
+
+    if (p_egl_headless) {
+        m_gpu->get_qemu_inst().set_display_arg("egl-headless");
+    }
 
     m_gpu->get_qemu_inst().set_vnc_args(m_qemu_opts);
 }

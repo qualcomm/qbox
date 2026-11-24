@@ -178,7 +178,6 @@ protected:
 
     cci::cci_param<std::string> p_args;
     std::string m_display_argument;
-    cci::cci_param<std::string> p_display;
 
     cci::cci_param<std::string> p_accel;
     cci::cci_param<std::string> p_whpx_args;
@@ -332,7 +331,6 @@ public:
         , p_icount("icount", false, "Enable virtual instruction counter")
         , p_icount_mips("icount_mips_shift", 0, "The MIPS shift value for icount mode (1 insn = 2^(mips) ns)")
         , p_args("qemu_args", "", "additional space separated arguments")
-        , p_display("display", "", "QEMU display backend. Keep empty for display=none")
         , p_accel("accel", "tcg", "Virtualization accelerator")
         , p_whpx_args("whpx_args", "", "Additional WHPX accelerator properties (e.g. gicd-base-address=0x17000000)")
         , p_time_sync_strategy("time_sync_strategy", "quantum_keeper",
@@ -362,10 +360,6 @@ public:
 
         /* Last: the destructor, which unregisters, only runs for a fully constructed object */
         qemu_instance_order::register_instance(this);
-
-        if (!p_display.get_value().empty()) {
-            set_display_arg(p_display.get_value());
-        }
     }
 
     QemuInstance(const QemuInstance&) = delete;
