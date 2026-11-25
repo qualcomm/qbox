@@ -28,9 +28,6 @@ protected:
     cci::cci_param<unsigned int> p_frame_stride;
     cci::cci_param<uint32_t> p_freq_hz;
     cci::cci_param<uint32_t> p_freq_scale;
-    /* One cnttid register covers 8 frames (4 bits/nibble per frame in a 32-bit register).
-     * Number of cnttid registers = ceil(nr_frames / 8). */
-    std::vector<std::unique_ptr<cci::cci_param<unsigned int>>> p_cnttid;
 
 public:
     QemuTargetSocket<> socket;
@@ -62,13 +59,6 @@ public:
         , view_socket("mem_view", inst)
         , irq("irq", p_nr_frames.get_value(), [](const char* n, size_t i) { return new QemuInitiatorSignalSocket(n); })
     {
-        /* 4 bits (one nibble) per frame in a 32-bit cnttid register -> 8 frames per register */
-        unsigned int nr_cnttid = (p_nr_frames.get_value() + 7) / 8;
-        for (unsigned int i = 0; i < nr_cnttid; ++i) {
-            p_cnttid.push_back(std::make_unique<cci::cci_param<unsigned int>>(
-                std::string("cnttid_") + std::to_string(i), (i == 0) ? 0x11u : 0x0u,
-                std::string("Value of cnttid_") + std::to_string(i)));
-        }
     }
 
     void before_end_of_elaboration() override
@@ -80,7 +70,6 @@ public:
         m_dev.set_prop_int("frame_stride", p_frame_stride);
         m_dev.set_prop_int("freq-hz", p_freq_hz.get_value());
         m_dev.set_prop_int("freq-scale", p_freq_scale.get_value());
-        /* cnttid_N are accepted but not forwarded: upstream derives them */
     }
 
     void end_of_elaboration() override

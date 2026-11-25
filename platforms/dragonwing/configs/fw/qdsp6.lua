@@ -482,14 +482,11 @@ function get_dsp(arch, base, ahbs_base, cfgtable, start_addr,
     -- QNX/QQVP side-loaded boots retain the powered-on default. QLI/PAS
     -- boots set QLI_PAS_BOOT before constructing the Hexagon CPUs.
     local qli_pas_boot = (rawget(_G, "QLI_PAS_BOOT") == true)
-    local sched_limit = qli_pas_boot;
     local jtlb_size = cfgtable[12];
     local dma_jtlb_size = cfgtable[61] or 0;
     local vtcm_base = cfgtable[15] << 16;
     local vtcm_size_kb = cfgtable[16];
     local machine_has_coproc = cfgtable[13] ~= 0;
-    local hvx_contexts = cfgtable[14];
-    local hmx_present = (cfgtable[31] ~= 0) and true or false;
     local l2vic_base = ahbs_base + 0x90000;
     local qtmr_rg0 = ahbs_base + 0xA1000;
     local is_vp_mode = true;
@@ -593,17 +590,10 @@ function get_dsp(arch, base, ahbs_base, cfgtable, start_addr,
             moduletype = "qemu_cpu_hexagon";
             args = {"&qemu_hex_inst", "&hexagon_globalreg", "&l2vic", "&hexagon_tlb"};
             start_powered_off = true;
-            sched_limit=sched_limit;
             dsp_arch=arch;
             vp_mode = is_vp_mode;
             enable_semihosting = false;
             htid = th;
-            subsystem_id = subsystem_id;
-            hexagon_num_threads = num_threads;
-            vtcm_base_addr = vtcm_base;
-            vtcm_size_kb = vtcm_size_kb;
-            hvx_contexts = hvx_contexts;
-            coproc2_present = hmx_present;
             mem = {bind = "&router.target_socket"};
             insn_per_second = 1000000000;
         };
