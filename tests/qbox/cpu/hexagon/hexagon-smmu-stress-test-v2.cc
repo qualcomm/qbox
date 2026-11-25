@@ -24,7 +24,7 @@
 #include "test/cpu.h"
 #include "test/tester/mmio.h"
 #include <hexagon.h>
-#include <hexagon_globalreg.h>
+#include "hexagon_subsys.h"
 #include <qemu-instance.h>
 #include <router.h>
 #include <gs_memory.h>
@@ -529,12 +529,11 @@ protected:
     QemuInstanceManager m_inst_manager;
     QemuInstance m_inst_a;
     QemuInstance m_inst_b;
-    hexagon_globalreg m_hex_gregs_a;
-    hexagon_globalreg m_hex_gregs_b;
+    HexagonSubsys m_sub_a;
+    HexagonSubsys m_sub_b;
     bool ab = false;
     sc_core::sc_vector<qemu_cpu_hexagon> m_cpus;
     MultiInitiatorSignalSocket<bool> m_cpu_halts;
-    std::array<std::unique_ptr<hexagon_tlb>, 2> m_tlbs;
 
     // Memory components
     gs::gs_memory<> m_mem;
@@ -637,8 +636,8 @@ public:
         , p_quantum_ns("quantum_ns", 1000000, "Value of the global TLM-2.0 quantum in ns")
         , m_inst_a("inst_a", &m_inst_manager, qemu_cpu_hexagon::ARCH)
         , m_inst_b("inst_b", &m_inst_manager, qemu_cpu_hexagon::ARCH)
-        , m_hex_gregs_a("hex_gregs_a", &m_inst_a)
-        , m_hex_gregs_b("hex_gregs_b", &m_inst_b)
+        , m_sub_a("sub_a", m_inst_a)
+        , m_sub_b("sub_b", m_inst_b)
         , m_cpus("cpu", p_num_cpu,
                  [this](const char* n, int i) {
                      ab = !ab;
@@ -695,14 +694,12 @@ public:
         // Hexagon HW has one TLB per core shared by all HW threads; here each
         // QEMU instance plays the role of a core, so we create exactly two
         // TLBs and link every CPU to the one on its instance.
-        m_tlbs[0] = std::make_unique<hexagon_tlb>("cpu_tlb_a", m_inst_a);
-        m_tlbs[1] = std::make_unique<hexagon_tlb>("cpu_tlb_b", m_inst_b);
-        for (auto& tlb : m_tlbs) {
-            tlb->p_num_entries = 256;
-            tlb->p_dma_entries = 16;
+        for (auto* sub : { &m_sub_a, &m_sub_b }) {
+            sub->tlb.p_num_entries = 256;
+            sub->tlb.p_dma_entries = 16;
         }
         for (uint32_t i = 0; i < num_cpus; ++i) {
-            m_cpus[i].set_hex_tlb(m_tlbs[i % 2].get());
+            (i % 2 == 0 ? m_sub_a : m_sub_b).attach(m_cpus[i], i / 2);
         }
 
         for (uint32_t i = 0; i < num_cpus; ++i) {
@@ -735,8 +732,8 @@ public:
         // Initialize CPU to region mapping
         m_cpu_to_region.resize(p_num_cpu.get_value(), 0xFFFFFFFF);
 
-        m_hex_gregs_a.p_hexagon_start_addr = BOOT_ADDR;
-        m_hex_gregs_b.p_hexagon_start_addr = BOOT_ADDR;
+        m_sub_a.gregs.p_hexagon_start_addr = BOOT_ADDR;
+        m_sub_b.gregs.p_hexagon_start_addr = BOOT_ADDR;
 
         // Set up tester controller parent reference
         m_tester_controller.set_parent(this);
@@ -815,25 +812,6 @@ public:
     void before_end_of_elaboration() override
     {
         TestBench::before_end_of_elaboration();
-
-        m_hex_gregs_a.before_end_of_elaboration();
-        m_hex_gregs_b.before_end_of_elaboration();
-
-        qemu::Device hex_gregs_a_dev = m_hex_gregs_a.get_qemu_dev();
-        qemu::Device hex_gregs_b_dev = m_hex_gregs_b.get_qemu_dev();
-
-        for (int i = 0; i < m_cpus.size(); i++) {
-            auto& cpu = m_cpus[i];
-            cpu.before_end_of_elaboration();
-            cpu.p_vtcm_base_addr = REGION_BASE;
-            cpu.p_vtcm_size_kb = REGION_SIZE / 1024;
-            cpu.p_hexagon_num_threads = (m_cpus.size() + 1) / 2;
-            qemu::Device cpu_dev = cpu.get_qemu_dev();
-
-            // Link to appropriate global regs based on which instance
-            bool uses_inst_a = (i % 2 == 0);
-            cpu_dev.set_prop_link("global-regs", uses_inst_a ? hex_gregs_a_dev : hex_gregs_b_dev);
-        }
     }
 
     void configure_test()

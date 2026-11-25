@@ -36,7 +36,7 @@ public:
     {
     }
     hexagon_l2vic(sc_core::sc_module_name nm, QemuInstance& inst)
-        : QemuDevice(nm, inst, "l2vic")
+        : QemuDevice(nm, inst, "hex-l2vic")
         , p_num_sources(1024) /* this is hardcoded in qemu */
         , p_num_outputs(8)    /* this is hardcoded in qemu */
         , socket("mem", inst)

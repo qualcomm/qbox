@@ -78,11 +78,9 @@ public:
         m_dev.set_prop_int("nr_frames", p_nr_frames);
         m_dev.set_prop_int("nr_views", p_nr_views);
         m_dev.set_prop_int("frame_stride", p_frame_stride);
-        m_dev.set_prop_int("freq", p_freq_hz.get_value());
+        m_dev.set_prop_int("freq-hz", p_freq_hz.get_value());
         m_dev.set_prop_int("freq-scale", p_freq_scale.get_value());
-        for (unsigned int i = 0; i < p_cnttid.size(); ++i) {
-            m_dev.set_prop_int((std::string("cnttid_") + std::to_string(i)).c_str(), *p_cnttid[i]);
-        }
+        /* cnttid_N are accepted but not forwarded: upstream derives them */
     }
 
     void end_of_elaboration() override

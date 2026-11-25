@@ -597,6 +597,7 @@ function get_dsp(arch, base, ahbs_base, cfgtable, start_addr,
             dsp_arch=arch;
             vp_mode = is_vp_mode;
             enable_semihosting = false;
+            htid = th;
             subsystem_id = subsystem_id;
             hexagon_num_threads = num_threads;
             vtcm_base_addr = vtcm_base;
