@@ -228,6 +228,7 @@ function(qbox_add_cpu_test target timeout_s)
         cpu_arm_cortexA53 qemu_cpu_hexagon cpu_riscv32
         global_peripheral_initiator router reset_gpio gs_memory smmu500 pass
         exclusive_monitor display plic_sifive qbox-common hexagon_globalreg
+        hexagon_l2vic hexagon_tlb qemu_hexagon_qtimer
     )
 
     foreach (accel ${QBOX_TEST_ACCELS})

@@ -15,7 +15,7 @@
 #include "hexagon.h"
 #include "qemu-instance.h"
 #include "reset_gpio.h"
-#include "hexagon_globalreg.h"
+#include "hexagon_subsys.h"
 
 /*
  * Hexagon RESET test.
@@ -40,9 +40,8 @@ class CpuHexagonResetGPIOTest : public CpuTestBench<qemu_cpu_hexagon, CpuTesterM
 
     MultiInitiatorSignalSocket<bool> reset;
     reset_gpio reset_controller;
-    hexagon_globalreg hex_gregs;
-    hexagon_tlb tlb_a;
-    hexagon_tlb tlb_b;
+    HexagonSubsys sub_a;
+    HexagonSubsys sub_b;
     std::thread m_thread;
     gs::async_event reset_event;
     sc_core::sc_event finish_event;
@@ -61,20 +60,20 @@ public:
     CpuHexagonResetGPIOTest(const sc_core::sc_module_name& n)
         : CpuTestBench<qemu_cpu_hexagon, CpuTesterMmio>(n)
         , reset_controller("reset", &m_inst_a)
-        , hex_gregs("hexagon_globalreg", &m_inst_a)
-        , tlb_a("tlb_a", m_inst_a)
-        , tlb_b("tlb_b", m_inst_b)
+        , sub_a("sub_a", m_inst_a)
+        , sub_b("sub_b", m_inst_b)
         , reset_count(0)
         , reset_done(false)
         , time_elapsed_ms(0)
     {
         for (int i = 0; i < m_cpus.size(); i++) {
             auto& cpu = m_cpus[i];
-            cpu.set_hex_tlb(i % 2 ? &tlb_b : &tlb_a);
-            cpu.p_hexagon_num_threads = m_cpus.size();
+            /* CPUs alternate between the two QEMU instances (cores) */
+            (i % 2 ? sub_b : sub_a).attach(cpu, i / 2);
             cpu.p_start_powered_off = (i != 0);
         }
-        hex_gregs.p_hexagon_start_addr = 0x0;
+        sub_a.gregs.p_hexagon_start_addr = 0x0;
+        sub_b.gregs.p_hexagon_start_addr = 0x0;
 
         reset.bind(reset_controller.reset_in);
 
@@ -92,14 +91,6 @@ public:
     void before_end_of_elaboration() override
     {
         CpuTestBench::before_end_of_elaboration();
-        hex_gregs.before_end_of_elaboration();
-        qemu::Device hex_gregs_dev = hex_gregs.get_qemu_dev();
-        for (int i = 0; i < m_cpus.size(); i++) {
-            auto& cpu = m_cpus[i];
-            cpu.before_end_of_elaboration();
-            qemu::Device cpu_dev = cpu.get_qemu_dev();
-            cpu_dev.set_prop_link("global-regs", hex_gregs_dev);
-        }
     }
 
     virtual ~CpuHexagonResetGPIOTest() {}

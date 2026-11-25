@@ -181,7 +181,7 @@ platform = {
                     irq_4 = {bind = "&gic_0.spi_in_44"},
                     irq_5 = {bind = "&gic_0.spi_in_45"},
                     irq_6 = {bind = "&gic_0.spi_in_46"},
-                    nr_frames=7;nr_views=2;cnttid_0=0x1111515};
+                    nr_frames=7;nr_views=2};
 
     -- charbackend_stdio_0 = {
     --     moduletype = "CharBackendStdio";

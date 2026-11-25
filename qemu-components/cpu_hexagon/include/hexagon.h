@@ -61,18 +61,9 @@ public:
         , p_start_powered_off("start_powered_off", false,
                               "Start and reset the CPU "
                               "in powered-off state")
-        , p_sched_limit("sched_limit", true, "use sched limit")
-        , p_paranoid("paranoid_commit_state", false, "enable per-packet checks")
-        , p_subsystem_id("subsystem_id", 0, "subsystem id")
-        , p_hexagon_num_threads("hexagon_num_threads", 8,
-                                "number of hexagon threads") // THREADS_MAX in ./target/hexagon/cpu.h
+        , p_htid("htid", 0, "hardware thread id of this CPU (unique within the subsystem)")
         , p_isdben_trusted("isdben_trusted", true, "isdben trusted")
         , p_isdben_secure("isdben_secure", true, "isdben secure")
-        , p_cmdline("cmdline", "", "cmdline")
-        , p_vtcm_base_addr("vtcm_base_addr", 0, "vtcm base address")
-        , p_vtcm_size_kb("vtcm_size_kb", 0, "vtcm size in kb")
-        , p_coproc2_present("coproc2_present", false, "secondary coprocessor is present")
-        , p_hvx_contexts("hvx_contexts", 0, "number of HVX contexts")
         , p_hex_greg(hex_greg)
         , m_l2vic(l2vic)
         , m_hex_tlb(tlb)
@@ -86,6 +77,7 @@ public:
         }
     }
 
+    void set_hex_greg(hexagon_globalreg* greg) { p_hex_greg = greg; }
     void set_l2vic(hexagon_l2vic* l2vic) { m_l2vic = l2vic; }
     void set_hex_tlb(hexagon_tlb* tlb) { m_hex_tlb = tlb; }
 
@@ -102,22 +94,16 @@ public:
             SCP_FATAL(())("Unrecognized Architecture Revision: " + dsp_arch);
         }
         cpu.set_prop_bool("start-powered-off", p_start_powered_off);
-        cpu.set_prop_bool("sched-limit", p_sched_limit);
         cpu.set_prop_bool("virtual-platform-mode", p_vp_mode);
         cpu.set_prop_bool("enable-semihosting", p_semihosting);
-        cpu.set_prop_bool("paranoid-commit-state", p_paranoid);
-        cpu.set_prop_int("subsystem-id", p_subsystem_id);
-        cpu.set_prop_int("thread-count", p_hexagon_num_threads);
-        cpu.set_prop_str("cmdline", p_cmdline.get_value().data());
-        cpu.set_prop_int("vtcm-base-addr", p_vtcm_base_addr);
-        cpu.set_prop_int("vtcm-size-kb", p_vtcm_size_kb);
-        cpu.set_prop_bool("coproc2-present", p_coproc2_present);
-        cpu.set_prop_int("hvx-contexts", p_hvx_contexts);
+        cpu.set_prop_int("htid", p_htid);
         if (p_hex_greg) {
             p_hex_greg->before_end_of_elaboration();
             qemu::Device hex_greg_dev = p_hex_greg->get_qemu_dev();
             qemu::Device cpu_dev = get_qemu_dev();
             cpu_dev.set_prop_link("global-regs", hex_greg_dev);
+            /* The PC the CPU starts executing from after a reset */
+            cpu_dev.set_prop_int("exec-start-addr", p_hex_greg->p_hexagon_start_addr);
         }
 
         if (m_l2vic) {
@@ -151,18 +137,10 @@ public:
     cci::cci_param<bool> p_vp_mode;
     cci::cci_param<bool> p_semihosting;
     cci::cci_param<bool> p_start_powered_off;
-    cci::cci_param<bool> p_sched_limit;
-    cci::cci_param<bool> p_paranoid;
     cci::cci_param<std::string> p_dsp_arch;
-    cci::cci_param<uint32_t> p_subsystem_id;
-    cci::cci_param<uint32_t> p_hexagon_num_threads;
+    cci::cci_param<uint32_t> p_htid;
     cci::cci_param<bool> p_isdben_trusted;
     cci::cci_param<bool> p_isdben_secure;
-    cci::cci_param<std::string> p_cmdline;
-    cci::cci_param<uint64_t> p_vtcm_base_addr;
-    cci::cci_param<uint32_t> p_vtcm_size_kb;
-    cci::cci_param<bool> p_coproc2_present;
-    cci::cci_param<uint32_t> p_hvx_contexts;
 };
 
 extern "C" void module_register();

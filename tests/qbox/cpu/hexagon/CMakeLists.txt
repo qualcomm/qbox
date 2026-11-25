@@ -30,6 +30,9 @@ target_link_libraries(
     router
     qemu_cpu_hexagon
     hexagon_globalreg
+    hexagon_l2vic
+    hexagon_tlb
+    qemu_hexagon_qtimer
 )
 
 add_dependencies(${HEXAGON_STANDALONE_TEST_NAME} ${HEXAGON_STANDALONE_TEST_NAME}-firmware)
