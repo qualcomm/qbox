@@ -430,6 +430,16 @@ public:
         trans.set_dmi_allowed(true);
 
         while (current_addr < addr + len) {
+            // Skip redundant DMI requests: releasing BQL here could let another vCPU re-enter the device.
+            // QEMU can return a partial mapping; the caller retries the rest.
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                auto it = m_dmi_aliases.upper_bound(current_addr);
+                if (it != m_dmi_aliases.begin()) {
+                    it--;
+                    if (it->second->get_end() >= current_addr) break;
+                }
+            }
             tlm::tlm_dmi dmi_data = check_dmi_hint_locked(trans);
 
             // Current addr is an absolute address while the dmi range might be relative
