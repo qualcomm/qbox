@@ -16,6 +16,7 @@
 #include <gs_memory.h>
 #include <router.h>
 #include <reg_router.h>
+#include <reg_model_maker/lazy_register_storage.h>
 #include <registers.h>
 #include <tlm_sockets_buswidth.h>
 #include <ports/initiator-signal-socket.h>
@@ -30,6 +31,12 @@
 #include <algorithm>
 
 namespace gs {
+
+namespace reg_model_maker_detail {
+void register_local_reg_router(gs::reg_router<>* router);
+void unregister_local_reg_router(gs::reg_router<>* router);
+bool is_local_reg_router(gs::reg_router<>* router);
+} // namespace reg_model_maker_detail
 
 class json_zip_archive
 {
@@ -222,6 +229,7 @@ public:
         , m_reset("reset")
         , m_is_platform_mod(_router && _reg_memory)
         , m_is_platform_top(jza.is_platform_top())
+        , m_platform_container(nullptr)
     {
         SCP_LOGGER_NAME().features[0] = "json_module_base_components";
         SCP_TRACE(())("base_components Constructor");
@@ -248,6 +256,7 @@ public:
                 SCP_ERR(())
                 ("parent module: {} is not a container)", container_name);
             }
+            m_platform_container = container;
             m_router = std::dynamic_pointer_cast<gs::router<>>(
                 container->find_module_by_name(std::string(_router->name())));
             m_reg_memory = std::dynamic_pointer_cast<gs::gs_memory<>>(
@@ -264,13 +273,79 @@ public:
     {
         if (m_reg_memory && !m_reg_router) {
             m_reg_router = std::make_unique<gs::reg_router<>>("reg_router", m_mod_addr_name_map);
-            m_reg_router->initiator_socket(m_reg_memory->socket);
-            if (!m_is_platform_mod) m_router->initiator_socket(m_reg_router->target_socket);
+            reg_model_maker_detail::register_local_reg_router(m_reg_router.get());
+            if (m_is_platform_mod) {
+                auto broker = cci::cci_get_broker();
+                const std::string memory = m_reg_memory->socket.get_base_export().name();
+                const uint64_t base = gs::cci_get<uint64_t>(broker, memory + ".address");
+                const uint64_t size = gs::cci_get<uint64_t>(broker, memory + ".size");
+                const bool relative = gs::cci_get_d<bool>(broker, memory + ".relative_addresses", true);
+                m_register_storage = std::make_unique<lazy_register_storage>(
+                    "register_storage", [this] { return find_shared_reg_router(); }, relative ? base : 0);
+                const std::string target = m_register_storage->target_socket.get_base_export().name();
+                broker.set_preset_cci_value(target + ".address", cci::cci_value(base));
+                broker.set_preset_cci_value(target + ".size", cci::cci_value(size));
+                broker.set_preset_cci_value(target + ".relative_addresses", cci::cci_value(false));
+                m_register_storage->memory_socket.bind(m_reg_memory->socket);
+                m_reg_router->initiator_socket.bind(m_register_storage->target_socket);
+            } else {
+                m_reg_router->initiator_socket(m_reg_memory->socket);
+                m_router->initiator_socket(m_reg_router->target_socket);
+            }
         }
     }
-    ~base_components() {}
+
+    template <class TYPE>
+    void bind_reg_callback(gs::gs_register<TYPE>& reg, const std::string& reg_target_socket_name)
+    {
+        sc_assert(m_reg_router);
+        m_reg_router->initiator_socket.bind(reg);
+        m_reg_router->rename_last(reg_target_socket_name);
+    }
+
+    template <class TYPE>
+    void bind_reg_storage_path(gs::gs_register<TYPE>& reg)
+    {
+        if (m_register_storage)
+            reg.initiator_socket.bind(m_register_storage->target_socket);
+        else
+            reg.initiator_socket.bind(m_reg_memory->socket);
+    }
+
+    // Prefer a register router already connected to the supplied platform
+    // router. Some containers create those final bindings after their models,
+    // so also allow one unambiguous external router in the same container that
+    // is connected to the same register-memory socket. Framework-owned local
+    // routers are excluded from that fallback discovery.
+    gs::reg_router<>* find_shared_reg_router()
+    {
+        if (!m_router || !m_reg_memory || !m_platform_container) return nullptr;
+
+        const std::string memory_socket_name = m_reg_memory->socket.get_base_export().name();
+        std::vector<gs::reg_router<>*> candidates;
+        for (auto* candidate : gs::find_sc_objects<gs::reg_router<>>(m_platform_container)) {
+            if (candidate == m_reg_router.get() || reg_model_maker_detail::is_local_reg_router(candidate)) continue;
+            const auto connected_targets = candidate->get_bound_targets();
+            const bool uses_shared_memory = std::any_of(
+                connected_targets.begin(), connected_targets.end(),
+                [&](const auto& connected_target) { return connected_target->name == memory_socket_name; });
+            if (uses_shared_memory) candidates.push_back(candidate);
+        }
+
+        // A completed direct binding is definitive, even if other routers
+        // in the container happen to use the same memory.
+        for (const auto& target : m_router->get_bound_targets()) {
+            for (auto* candidate : candidates) {
+                if (target->name == candidate->target_socket.get_base_export().name()) return candidate;
+            }
+        }
+        return candidates.size() == 1 ? candidates.front() : nullptr;
+    }
+
+    ~base_components() { reg_model_maker_detail::unregister_local_reg_router(m_reg_router.get()); }
     void reset(bool value)
     {
+        if (m_register_storage) m_register_storage->reset->write(value);
         if (m_reg_memory && !m_is_platform_mod && !m_is_platform_top) {
             m_reset->write(value);
             if (value) {
@@ -288,6 +363,8 @@ private:
     std::map<uint64_t, std::pair<uint64_t, std::string>> m_mod_addr_name_map;
     bool m_is_platform_mod;
     bool m_is_platform_top;
+    std::unique_ptr<lazy_register_storage> m_register_storage;
+    gs::ModuleFactory::ContainerBase* m_platform_container;
     std::string bin_file_name;
     std::string zip_archive_name;
     zip_t* zip_archive_ptr;
@@ -415,7 +492,7 @@ public:
         SCP_TRACE(())
         ("Binding {} in {}", reg.get_regname(),
          std::string(sc_core::sc_module::name()) + ((!parent.empty()) ? "." + parent : ""));
-        reg.initiator_socket.bind(m_sh_comp->m_reg_memory->socket);
+        m_sh_comp->bind_reg_storage_path(reg);
         std::string mod_address_str = std::string(sc_core::sc_module::name()) + "." +
                                       ((!parent.empty()) ? parent + "." : "") + "target_socket.address";
         std::string reg_target_socket_name = std::string(this->name()) + "." + ((!parent.empty()) ? parent + "." : "") +
@@ -438,8 +515,7 @@ public:
             cci_set<std::string>(reg_target_socket_name + ".dim_counts", encode_dims(reg.get_dim_counts()));
         }
         if (priority != 0) cci_set<uint32_t>(reg_target_socket_name + ".priority", priority);
-        m_sh_comp->m_reg_router->initiator_socket.bind(reg);
-        m_sh_comp->m_reg_router->rename_last(reg_target_socket_name);
+        m_sh_comp->bind_reg_callback(reg, reg_target_socket_name);
         m_bound_regs_num++;
     }
 
@@ -465,11 +541,10 @@ public:
                 rapidjson::Value* _node = nullptr, std::string _path = "", bool top = true)
         : json_module_base(_name, jza, _router, _reg_memory, sh_comp, _node, _path, top), target_socket("target_socket")
     {
-        if (!_router && !_reg_memory) {
-            target_socket.bind(m_sh_comp->m_router->target_socket);
-        } else {
+        if (m_is_platform_mod)
             target_socket.bind(m_sh_comp->m_reg_router->target_socket);
-        }
+        else
+            target_socket.bind(m_sh_comp->m_router->target_socket);
     }
 };
 
