@@ -12,13 +12,19 @@ endmacro()
 # ##############################################################################
 
 macro(install_systemc)
-    if(DEFINED ENV{SYSTEMC_HOME} OR DEFINED SYSTEMC_HOME)
+    # check for environment SYSTEMC_HOME variable
+    if(DEFINED ENV{SYSTEMC_HOME} AND NOT ENV{SYSTEMC_HOME} STREQUAL "")
         set(SYSTEMC_HOME $ENV{SYSTEMC_HOME})
-
-        CPMAddPackage(NAME SystemC SOURCE_DIR ${SYSTEMC_HOME})
 
         set(SystemCLanguage_FOUND TRUE)
         set(SystemCLanguageLocal_FOUND TRUE)
+        message(STATUS "Using SystemC ${SystemCLanguage_VERSION} (${SystemCLanguage_SOURCE_DIR}) detected via environment variable SYSTEMC_HOME")
+    # check for SYSTEMC_HOME variable (-DSYSTEMC_HOME)
+    elseif(DEFINED SYSTEMC_HOME AND NOT SYSTEMC_HOME STREQUAL "")
+
+        set(SystemCLanguage_FOUND TRUE)
+        set(SystemCLanguageLocal_FOUND TRUE)
+        message(STATUS "Using SystemC ${SystemCLanguage_VERSION} (${SystemCLanguage_SOURCE_DIR}) detected via cmake define SYSTEMC_HOME")
     else()
         gs_addexpackage(
             NAME SystemCLanguage
