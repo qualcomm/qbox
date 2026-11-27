@@ -245,7 +245,7 @@ class proxy_data_array
             uint64_t start = m_dmi_data.get_start_address();
             unsigned char* ptr = m_dmi_data.get_dmi_ptr();
             ptr += (p_offset - start);
-            sc_assert(m_dmi_data.get_end_address() >= start + p_offset + span);
+            sc_assert(m_dmi_data.get_end_address() >= p_offset + span - 1);
             m_dmi = reinterpret_cast<TYPE*>(ptr);
         }
     }

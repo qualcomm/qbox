@@ -56,6 +56,18 @@ class reg_router : public sc_core::sc_module, public gs::router_if<BUSWIDTH>
     }
 
 public:
+    // Read-only image metadata; no decoding, loading or callback dispatch.
+    bool get_module_region(uint64_t address, uint64_t& base, uint64_t& size) const
+    {
+        auto it = mod_addr_name_map.upper_bound(address);
+        if (it == mod_addr_name_map.begin()) return false;
+        --it;
+        if (address - it->first >= it->second.first) return false;
+        base = it->first;
+        size = it->second.first;
+        return true;
+    }
+
     void b_transport(int id, tlm::tlm_generic_payload& trans, sc_core::sc_time& delay)
     {
         sc_dt::uint64 addr = trans.get_address();

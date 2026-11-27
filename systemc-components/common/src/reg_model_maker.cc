@@ -10,9 +10,28 @@
 
 #include <cstdlib>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace gs {
+
+namespace reg_model_maker_detail {
+namespace {
+std::unordered_set<gs::reg_router<>*> local_reg_routers;
+}
+
+void register_local_reg_router(gs::reg_router<>* router)
+{
+    if (router) local_reg_routers.insert(router);
+}
+
+void unregister_local_reg_router(gs::reg_router<>* router)
+{
+    if (router) local_reg_routers.erase(router);
+}
+
+bool is_local_reg_router(gs::reg_router<>* router) { return local_reg_routers.find(router) != local_reg_routers.end(); }
+} // namespace reg_model_maker_detail
 
 json_zip_archive::json_zip_archive(zip_t* archive)
     : m_archive(archive)
