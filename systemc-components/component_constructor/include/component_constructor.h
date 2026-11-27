@@ -113,10 +113,11 @@ private:
                 configs << key << "=" << value << ";";
             }
         }
-        if (!_name.empty() && configs.str().empty()) {
+        m_configs = configs.str();
+        if (!_name.empty() && m_configs.empty()) {
             SCP_FATAL(()) << "Requested configuration: " << _name << " was not found!";
         }
-        return configs.str().c_str();
+        return m_configs.c_str();
     }
 
     template <typename T>
@@ -142,9 +143,10 @@ private:
     cci::cci_broker_handle m_broker;
     cci::cci_param<std::string> p_node_exe_path;
     cci::cci_param<std::string> p_node_name;
-    void* m_lib_handle;
+    void* m_lib_handle = nullptr;
     fssBindIFHandle m_node_handle;
     fssConfigIf m_config_handle;
+    std::string m_configs;
     CreateNodeFnPtr CreateNode;
     DestroyNodeFnPtr DestroyNode;
 
